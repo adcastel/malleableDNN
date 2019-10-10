@@ -21,7 +21,7 @@
 
 /* Model features */
 
-#define NUM_STEPS  10  // Steps of the simulation
+#define NUM_STEPS  3  // Steps of the simulation
 #define BATCH_SIZE  64 // Batch size
 
 ///////////////////////////// PARSER ////////////////////////////////
@@ -155,7 +155,7 @@ int main(int argc, char * argv []) {
     	type[i] = MPOOL; min_size[i]= minsconv; nkernels[i]= 0; 
     }
     if(rank == 0)
-      printf("type %d, neurons %d, image_size %d, channels %d, kwidth %d, kheight %d, hstrides %d, vstrides %d,  procs %d\n",type[i],nneurons[i] ,image_size[i],channels[i],kwidth[i],kheight[i],hstrides[i],vstrides[i],procs[i]);
+      printf("layer %d, type %d, neurons %d, image_size %d, channels %d, kwidth %d, kheight %d, hstrides %d, vstrides %d,  procs %d\n",i,type[i],nneurons[i] ,image_size[i],channels[i],kwidth[i],kheight[i],hstrides[i],vstrides[i],procs[i]);
       i++;
     }
     fclose(fp_model);
@@ -204,16 +204,16 @@ int main(int argc, char * argv []) {
     float * matrix_B = malloc(max_size_fc * sizeof ( float));
     float * matrix_C = malloc(max_size_fc * sizeof ( float));
 
-    size_t max_i = channels[0] * BATCH_SIZE * image_size[0] * image_size[0];
-    size_t max_ip = channels[0] * kwidth[0] * kheight[0] * BATCH_SIZE * image_size[0] * image_size[0];
-    size_t max_o = nkernels[0] * BATCH_SIZE * image_size[0] * image_size[0];
-    size_t max_f = nkernels[0] * channels[0] * kwidth[0] * kheight[0];
+    size_t max_i = 0;//channels[0] * BATCH_SIZE * image_size[0] * image_size[0];
+    size_t max_ip = 0;//channels[0] * kwidth[0] * kheight[0] * BATCH_SIZE * image_size[0] * image_size[0];
+    size_t max_o = 0;//nkernels[0] * BATCH_SIZE * image_size[0] * image_size[0];
+    size_t max_f = 0;//nkernels[0] * channels[0] * kwidth[0] * kheight[0];
     for (l = 1; l < NUM_LAYERS; l++) {
         if (type[l] == CONV) {
-            size_t mi = channels[l] * BATCH_SIZE * image_size[l] * image_size[l];
-            size_t mip = channels[l] * kwidth[l] * kheight[l] * BATCH_SIZE * image_size[l] * image_size[l];
-            size_t mo = nkernels[l] * BATCH_SIZE * image_size[l] * image_size[l];
-            size_t mf = nkernels[l] * channels[l] * kwidth[l] * kheight[l];
+            size_t mi = channels[l-1] * BATCH_SIZE * image_size[l-1] * image_size[l-1];
+            size_t mip = channels[l-1] * kwidth[l] * kheight[l] * BATCH_SIZE * image_size[l-1] * image_size[l-1];
+            size_t mo = nkernels[l] * BATCH_SIZE * image_size[l-1] * image_size[l-1];
+            size_t mf = nkernels[l] * channels[l-1] * kwidth[l] * kheight[l];
             if (mi > max_i) {
                 max_i = mi;
             }
@@ -228,6 +228,7 @@ int main(int argc, char * argv []) {
             }
         }
     }
+    printf("mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", max_i, max_ip, max_o, max_f);
     float * conv_i = malloc(max_i * sizeof (float));
     float * conv_ip = malloc(max_ip * sizeof (float));
     float * conv_o = malloc(max_o * sizeof (float));
@@ -255,16 +256,16 @@ int main(int argc, char * argv []) {
         
         for (s = 0; s < NUM_STEPS; s++) {
 #ifdef PROGRESS
-            //printf("Starting Step %d\n", s);
+            printf("Starting Step %d\n", s);
 #endif
 #ifdef TIMER
             step_timer[s] = omp_get_wtime();
 #endif
             //Forward pass
             for (l = 1; l < NUM_LAYERS; l++) {
-                //printf("FP layer %d ",l);
+                printf("FP layer %d ",l);
                         if (type[l] == FC) { //FC
-                		//printf("FC \n");
+                		printf("FC \n");
                             int m = nneurons[l]; //nneurons[l]/procs[l];//antes /size
                             int n = BATCH_SIZE;
                             int k = nneurons[l - 1]; //We need to reshape if the previous one was CONV
@@ -283,29 +284,43 @@ int main(int argc, char * argv []) {
 #endif
 
                         } else { //conv
-               		    //printf("CONV \n");
-                            int num_kernels = nkernels[l]; //nneurons[l]/procs[l];//antes /size
-                            int b = BATCH_SIZE;
-                            int h = image_size[l - 1];
-                            int w = image_size[l - 1];
-                            int c = channels[l - 1];
-                            int kh = kheight[l];
-                            int kw = kheight[l];
+               		    if(type[l] == CONV){
+				printf("CONV \n");
+                                int num_kernels = nkernels[l]; //nneurons[l]/procs[l];//antes /size
+                                int b = BATCH_SIZE;
+                                int h = image_size[l - 1];
+                                int w = image_size[l - 1];
+                                int c = channels[l - 1];
+                                int kh = kheight[l];
+                                int kw = kwidth[l];
 #ifdef TIMER
-                            fp_comp_timer[s][l] = omp_get_wtime();
+                                fp_comp_timer[s][l] = omp_get_wtime();
 #endif
-                            CONV_fp(l, num_kernels, b, h, w, kh, kw, c,
+                                printf("%d, %d, %d, %d, %d,%d, %d\n",num_kernels, b, h, w, kh, kw, c);
+				size_t aux = 1;
+				printf("sizes mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", c*b*h*w*aux, c*kw*kh*b*h*w*aux, num_kernels*b*h*w*aux, num_kernels*c*kw*kh*aux);
+                                CONV_fp(l, num_kernels, b, h, w, kh, kw, c,
                                     conv_i, conv_ip, conv_o, conv_f, &fp_im2col_timer[s][l]);
 
 #ifdef TIMER
-                            fp_comp_timer[s][l] = omp_get_wtime() - fp_comp_timer[s][l];
-                            int m = nkernels[l];
-                            int n = b * h * w;
-                            int k = c * kh *kw;
-                            fp_comp_gflops[s][l] = (2.0 * m * n * k / fp_comp_timer[s][l]) / (1.0e+9);
-                            fp_comp_gflops_per_thread[s][l] = fp_comp_gflops[s][l] / (1.0 * OMP_NUM_THREADS);
+                                fp_comp_timer[s][l] = omp_get_wtime() - fp_comp_timer[s][l];
+                                int m = nkernels[l];
+                                int n = b * h * w;
+                                int k = c * kh *kw;
+                                fp_comp_gflops[s][l] = (2.0 * m * n * k / fp_comp_timer[s][l]) / (1.0e+9);
+                                fp_comp_gflops_per_thread[s][l] = fp_comp_gflops[s][l] / (1.0 * OMP_NUM_THREADS);
 #endif
-                        }
+                           }
+			   else{
+				printf("OTRA \n");
+#ifdef TIMER
+                                fp_comp_timer[s][l] = 0.0;
+                                fp_comp_gflops[s][l] = 0.0;
+                                fp_comp_gflops_per_thread[s][l] = 0.0;
+#endif
+
+			   }
+			}
                     }
 
 #ifdef TIMER
