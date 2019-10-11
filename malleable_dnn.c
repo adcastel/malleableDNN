@@ -79,9 +79,9 @@ int problem_size(int elements, int nprocs, int rank);
 
 /* Computation functions */
 void FC_gemm_fp(int m, int n, int k, float * A, int lda,
-        float * B, int ldb, float * C, int ldc);
+        float * B, int ldb, float * C, int ldc, int threads);
 void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C,
-        float * I, float * IP, float * O, float * F, double * time);
+        float * I, float * IP, float * O, float * F, double * time, int threads);
 
 /* Communication functions */
 
@@ -89,19 +89,22 @@ int main(int argc, char * argv []) {
 
     int rank, size, i, s, l;
     double alpha = 1.0, beta = 0.0;
+    double time = 0.0; 
     
-    
-    if (argc < 2){
-      perror("Usage: ./dnn model.csv\n");
+    if (argc < 4 ){
+      perror("Usage: ./dnn model.csv steps teams\n");
       exit(-1);
     }
 
-
+    int nsteps = atoi(argv[2]);
+    int teams = atoi(argv[3]);
 
     FILE *fp_model, *fp_results;
     int aux, j;
     char auxstr[200], auxstr2[200], *token, *str;
+#ifdef PROGRESS
     printf("Model: %s\n", argv[1]);
+#endif
     fp_model= fopen(argv[1], "r");
     //printf("layers: %d\n",count_layers(fp_model));
     int NUM_LAYERS = count_layers(fp_model)-1; //we discard the info line
@@ -154,20 +157,21 @@ int main(int argc, char * argv []) {
     else if ( !strcmp(typel, "mpool") ){ 
     	type[i] = MPOOL; min_size[i]= minsconv; nkernels[i]= 0; 
     }
-    if(rank == 0)
+#ifdef PROGRESS
       printf("layer %d, type %d, neurons %d, image_size %d, channels %d, kwidth %d, kheight %d, hstrides %d, vstrides %d,  procs %d\n",i,type[i],nneurons[i] ,image_size[i],channels[i],kwidth[i],kheight[i],hstrides[i],vstrides[i],procs[i]);
-      i++;
+#endif      
+	i++;
     }
     fclose(fp_model);
 
 #ifdef TIMER
-    double step_timer[NUM_STEPS];
-    double * fp_comp_timer[NUM_STEPS];
-    double * fp_im2col_timer[NUM_STEPS];
-    double * fp_comp_gflops[NUM_STEPS];
-    double * fp_comp_gflops_per_thread[NUM_STEPS];
+    double *step_timer = (double *) malloc(sizeof(double) * nsteps);
+    double ** fp_comp_timer = (double **) malloc(sizeof(double) * nsteps); 
+    double ** fp_im2col_timer = malloc(sizeof(double) * nsteps);
+    double ** fp_comp_gflops = malloc(sizeof(double) * nsteps);
+    double ** fp_comp_gflops_per_thread = malloc(sizeof(double) * nsteps);
     
-    for (i = 0; i < NUM_STEPS; i++){
+    for (i = 0; i < nsteps; i++){
         fp_comp_timer[i] = (double *) malloc(sizeof (double) * NUM_LAYERS);
         fp_im2col_timer[i] = (double *) malloc(sizeof (double) * NUM_LAYERS);
         fp_comp_gflops[i] = (double *) malloc(sizeof (double) * NUM_LAYERS);
@@ -228,7 +232,9 @@ int main(int argc, char * argv []) {
             }
         }
     }
+#ifdef PROGRESS
     printf("mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", max_i, max_ip, max_o, max_f);
+#endif
     float * conv_i = malloc(max_i * sizeof (float));
     float * conv_ip = malloc(max_ip * sizeof (float));
     float * conv_o = malloc(max_o * sizeof (float));
@@ -247,14 +253,17 @@ int main(int argc, char * argv []) {
     int omp_warm;
 #pragma omp parallel
     {
-        omp_warm = omp_get_thread_num();
+        omp_warm = omp_get_num_threads();
     }
     cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
             200, 200, 200, 1,
             matrix_A, 200, matrix_B, 200, 0, matrix_C, 200);
+        int threads = omp_warm/teams;
 
-        
-        for (s = 0; s < NUM_STEPS; s++) {
+    printf("Tengo %d threads repartidos en %d teams de %d threads\n",omp_warm,teams,threads);
+        time = omp_get_wtime();
+        #pragma omp parallel for num_threads(teams) private(l)
+        for (s = 0; s < nsteps; s++) {
 #ifdef PROGRESS
             printf("Starting Step %d\n", s);
 #endif
@@ -263,9 +272,13 @@ int main(int argc, char * argv []) {
 #endif
             //Forward pass
             for (l = 1; l < NUM_LAYERS; l++) {
+#ifdef PROGRESS
                 printf("FP layer %d ",l);
+#endif
                         if (type[l] == FC) { //FC
+#ifdef PROGRESS
                 		printf("FC \n");
+#endif
                             int m = nneurons[l]; //nneurons[l]/procs[l];//antes /size
                             int n = BATCH_SIZE;
                             int k = nneurons[l - 1]; //We need to reshape if the previous one was CONV
@@ -275,7 +288,7 @@ int main(int argc, char * argv []) {
 #ifdef TIMER
                             fp_comp_timer[s][l] = omp_get_wtime();
 #endif
-                            FC_gemm_fp(m, n, k, matrix_A, lda, matrix_B, ldb, matrix_C, ldc);
+                            FC_gemm_fp(m, n, k, matrix_A, lda, matrix_B, ldb, matrix_C, ldc, threads);
 #ifdef TIMER
                             fp_comp_timer[s][l] = omp_get_wtime() - fp_comp_timer[s][l];
                             m = nneurons[l];
@@ -285,7 +298,9 @@ int main(int argc, char * argv []) {
 
                         } else { //conv
                		    if(type[l] == CONV){
+#ifdef PROGRESS
 				printf("CONV \n");
+#endif
                                 int num_kernels = nkernels[l]; //nneurons[l]/procs[l];//antes /size
                                 int b = BATCH_SIZE;
                                 int h = image_size[l - 1];
@@ -296,11 +311,13 @@ int main(int argc, char * argv []) {
 #ifdef TIMER
                                 fp_comp_timer[s][l] = omp_get_wtime();
 #endif
+#ifdef PROGRESS
                                 printf("%d, %d, %d, %d, %d,%d, %d\n",num_kernels, b, h, w, kh, kw, c);
 				size_t aux = 1;
 				printf("sizes mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", c*b*h*w*aux, c*kw*kh*b*h*w*aux, num_kernels*b*h*w*aux, num_kernels*c*kw*kh*aux);
+#endif
                                 CONV_fp(l, num_kernels, b, h, w, kh, kw, c,
-                                    conv_i, conv_ip, conv_o, conv_f, &fp_im2col_timer[s][l]);
+                                    conv_i, conv_ip, conv_o, conv_f, &fp_im2col_timer[s][l],threads);
 
 #ifdef TIMER
                                 fp_comp_timer[s][l] = omp_get_wtime() - fp_comp_timer[s][l];
@@ -312,7 +329,9 @@ int main(int argc, char * argv []) {
 #endif
                            }
 			   else{
+#ifdef PROGRESS
 				printf("OTRA \n");
+#endif
 #ifdef TIMER
                                 fp_comp_timer[s][l] = 0.0;
                                 fp_comp_gflops[s][l] = 0.0;
@@ -327,10 +346,12 @@ int main(int argc, char * argv []) {
             step_timer[s] = omp_get_wtime() - step_timer[s];
 #endif
         } //steps
+
+        time = omp_get_wtime() - time;
 #ifdef TIMER
 #ifndef SUMMARY
             double total_time = 0.0;
-            for (s = 0; s < NUM_STEPS; s++) {
+            for (s = 0; s < nsteps; s++) {
                 printf("STEP %d\nTime %f\n", s, step_timer[s]);
                 printf("\t **** FP ****\n");
                 for (l = 1; l < NUM_LAYERS; l++) {
@@ -341,7 +362,7 @@ int main(int argc, char * argv []) {
                 }
                 total_time += step_timer[s];
             }
-            printf("Time per step = %f\n", total_time / NUM_STEPS);
+            printf("Time per step = %f\n", total_time / nsteps);
 #else
 
             double  total_time_r[NUM_LAYERS], total_time_fp[NUM_LAYERS], total_time_comp_fp[NUM_LAYERS]; 
@@ -352,8 +373,8 @@ int main(int argc, char * argv []) {
                 total_time_comp_fp[l] = 0;
 
             }
+            for (s = 1; s < nsteps; s++) {
             for (l = 1; l < NUM_LAYERS; l++) {
-            for (s = 1; s < NUM_STEPS; s++) {
                     total_time_fp[l] += fp_comp_timer[s][l];
                     total_time_comp_fp[l] += fp_comp_timer[s][l];
 }
@@ -363,13 +384,14 @@ int main(int argc, char * argv []) {
             printf("#layer #threads total_time \n");
             for (l = 1; l < NUM_LAYERS; l++) {
 		tt+=total_time_fp[l];
-                printf("%d %d %f\n", l, OMP_NUM_THREADS, total_time_fp[l] / (NUM_STEPS - 1)); 
+                printf("%d %d %f\n", l, OMP_NUM_THREADS, total_time_fp[l] / (nsteps - 1)); 
             }
-            printf("Total %f \n", tt/ (NUM_STEPS - 1));
+            printf("Total %f \n", tt/ (nsteps - 1));
 
 #endif
 #endif    
 
+    printf("Total %d steps, batches %d, teams %d => time %f (s)\n", nsteps, BATCH_SIZE, teams, time);
 
     free(matrix_A);
     free(matrix_B);
@@ -379,7 +401,9 @@ int main(int argc, char * argv []) {
     return 0;
 }
 
-void FC_gemm_fp(int m, int n, int k, float * A, int lda, float * B, int ldb, float * C, int ldc) {
+void FC_gemm_fp(int m, int n, int k, float * A, int lda, float * B, int ldb, float * C, int ldc, int threads) {
+    //mkl_domain_set_num_threads(threads, MKL_DOMAIN_BLAS);
+    omp_set_num_threads(threads);
     cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
            m, n, k, 1,
             A, lda, B, ldb, 0, C, ldc);
@@ -387,7 +411,7 @@ void FC_gemm_fp(int m, int n, int k, float * A, int lda, float * B, int ldb, flo
 }
 
 
-void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I, float * IP, float * O, float * F, double * time) {
+void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I, float * IP, float * O, float * F, double * time, int threads) {
 
     // B batch size
     // Input image of size H x W, with C channels
@@ -406,15 +430,15 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
     // Im2col: I -> IP
 
     int kk1 = KH * KW * B * H*W;
-    int kk2 = KW * B * H*W;
-    int kk3 = B * H*W;
+    int  kk2 = KW * B * H*W;
+    int  kk3 = B * H*W;
     int kk4 = H*W;
     int kk5 = B * (H + KH)*(W + KW);
     int kk6 = (H + KH)*(W + KW);
     int kk7 = (W + KW);
     int jk1, ik1, ik2, jk2, jk3, jk4, ik3, ik4, ik5;
 //printf("Antes de im2col\n");
-#pragma omp parallel for private(b,h,w,kh,kw,ik1,ik2,ik3,ik4,ik5,jk1,jk2,jk3,jk4)
+#pragma omp parallel for private(b,h,w,kh,kw,ik1,ik2,ik3,ik4,ik5,jk1,jk2,jk3,jk4) num_threads(threads)
     for (c = 0; c < C; c++) {
         ik1 = c*kk1;
         jk1 = c*kk5;
@@ -429,8 +453,9 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
                     jk4 = jk3 + kw;
                     for (h = 0; h < H; h++) {
                         ik5 = ik4 + h*W;
-                        for (w = 0; w < W; w++)
-                            IP[ ik5 + w ] = I[ jk4 + w ];
+                        for (w = 0; w < W; w++){
+                           IP[ ik5 + w ] = I[ /*jk4 +*/ w];
+			}
                     }
                 }
             }
@@ -446,7 +471,7 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
      */
 #endif
     // Gemm
-//printf("Antes de gemm\n");
+
     int m = K;
     int n = B * H*W;
     int k = C * KH*KW;
@@ -454,6 +479,8 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
     int ldb = k;
     int ldc = m;
 
+    //mkl_domain_set_num_threads(threads, MKL_DOMAIN_BLAS);
+    omp_set_num_threads(threads);
     cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
             m, n, k, 1,
             F, lda, IP, ldb, 0, O, ldc);
