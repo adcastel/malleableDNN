@@ -177,6 +177,10 @@ int main(int argc, char * argv []) {
         fp_comp_gflops[i] = (double *) malloc(sizeof (double) * NUM_LAYERS);
         fp_comp_gflops_per_thread[i] = (double *) malloc(sizeof (double) * NUM_LAYERS);
     }
+#else
+   
+    double ** fp_im2col_timer = malloc(sizeof(double) * nsteps);
+
 #endif
     /* Model */
 
@@ -204,10 +208,10 @@ int main(int argc, char * argv []) {
     }
 
     /* This matrices are for FC layers */
-    float * matrix_A = malloc(max_size_fc * sizeof ( float));
+   /* float * matrix_A = malloc(max_size_fc * sizeof ( float));
     float * matrix_B = malloc(max_size_fc * sizeof ( float));
     float * matrix_C = malloc(max_size_fc * sizeof ( float));
-
+*/
     size_t max_i = 0;//channels[0] * BATCH_SIZE * image_size[0] * image_size[0];
     size_t max_ip = 0;//channels[0] * kwidth[0] * kheight[0] * BATCH_SIZE * image_size[0] * image_size[0];
     size_t max_o = 0;//nkernels[0] * BATCH_SIZE * image_size[0] * image_size[0];
@@ -235,16 +239,16 @@ int main(int argc, char * argv []) {
 #ifdef PROGRESS
     printf("mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", max_i, max_ip, max_o, max_f);
 #endif
-    float * conv_i = malloc(max_i * sizeof (float));
+    /*float * conv_i = malloc(max_i * sizeof (float));
     float * conv_ip = malloc(max_ip * sizeof (float));
     float * conv_o = malloc(max_o * sizeof (float));
-    float * conv_f = malloc(max_f * sizeof (float)); 
+    float * conv_f = malloc(max_f * sizeof (float));*/ 
     /* The maximum size of the matrix model fits with the one of the matrix */
     size_t model_size = (max_size_fc > max_size_conv) ? max_size_fc : max_size_conv; //This is the maximum size of the model layers
-    float * model = malloc(model_size * sizeof (float));
+    //float * model = malloc(model_size * sizeof (float));
     /* The data size is equal to the neurons in the first layer per the batch size */
     size_t data_size = nneurons[0] * BATCH_SIZE;
-    float * data = malloc(data_size * sizeof (float));
+    //float * data = malloc(data_size * sizeof (float));
 
 
 
@@ -255,14 +259,28 @@ int main(int argc, char * argv []) {
     {
         omp_warm = omp_get_num_threads();
     }
-    cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
+    /*cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
             200, 200, 200, 1,
             matrix_A, 200, matrix_B, 200, 0, matrix_C, 200);
-        int threads = omp_warm/teams;
+    */   
+     int threads = omp_warm/teams;
 
-    printf("Tengo %d threads repartidos en %d teams de %d threads\n",omp_warm,teams,threads);
+   // printf("Tengo %d threads repartidos en %d teams de %d threads\n",omp_warm,teams,threads);
         time = omp_get_wtime();
-        #pragma omp parallel for num_threads(teams) private(l)
+        #pragma omp parallel num_threads(teams)
+	{
+    //	printf("Thread %d con team de %d threads reservando memoria...\n",omp_get_thread_num(), threads);
+	
+    	float * conv_i = malloc(max_i * sizeof (float));
+    	float * conv_ip = malloc(max_ip * sizeof (float));
+    	float * conv_o = malloc(max_o * sizeof (float));
+    	float * conv_f = malloc(max_f * sizeof (float)); 
+        
+    	float * matrix_A = malloc(max_size_fc * sizeof ( float));
+    	float * matrix_B = malloc(max_size_fc * sizeof ( float));
+    	float * matrix_C = malloc(max_size_fc * sizeof ( float));
+	
+	#pragma omp for private(l)
         for (s = 0; s < nsteps; s++) {
 #ifdef PROGRESS
             printf("Starting Step %d\n", s);
@@ -272,6 +290,7 @@ int main(int argc, char * argv []) {
 #endif
             //Forward pass
             for (l = 1; l < NUM_LAYERS; l++) {
+    //	printf("Thread %d em step %d layer %d...\n",omp_get_thread_num(),s,l);
 #ifdef PROGRESS
                 printf("FP layer %d ",l);
 #endif
@@ -346,7 +365,7 @@ int main(int argc, char * argv []) {
             step_timer[s] = omp_get_wtime() - step_timer[s];
 #endif
         } //steps
-
+	} //parallel
         time = omp_get_wtime() - time;
 #ifdef TIMER
 #ifndef SUMMARY
@@ -393,20 +412,21 @@ int main(int argc, char * argv []) {
 
     printf("Total %d steps, batches %d, teams %d => time %f (s)\n", nsteps, BATCH_SIZE, teams, time);
 
-    free(matrix_A);
+    /*free(matrix_A);
     free(matrix_B);
-    free(matrix_C);
-        free(model);
-      free(data);
+    free(matrix_C);*/
+    //   free(model);
+    //  free(data);
     return 0;
 }
 
 void FC_gemm_fp(int m, int n, int k, float * A, int lda, float * B, int ldb, float * C, int ldc, int threads) {
     //mkl_domain_set_num_threads(threads, MKL_DOMAIN_BLAS);
+//	printf("FC con %d threads\n",threads);
     omp_set_num_threads(threads);
     cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
-           m, n, k, 1,
-            A, lda, B, ldb, 0, C, ldc);
+          m, n, k, 1,
+           A, lda, B, ldb, 0, C, ldc);
     //printf("FP  FC  GEMM m(%d) : n(%d) : k(%d)\n", m, n, k);
 }
 
@@ -423,6 +443,7 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
     float F[K][C][KH][KW];        // Filter: K x (C K_H K_W)
      */
 
+//	printf("Conv con %d threads\n",threads);
     int b, h, w, kh, kw, c;
 #ifdef TIMER
     *time = omp_get_wtime();
@@ -438,6 +459,7 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
     int kk7 = (W + KW);
     int jk1, ik1, ik2, jk2, jk3, jk4, ik3, ik4, ik5;
 //printf("Antes de im2col\n");
+/*
 #pragma omp parallel for private(b,h,w,kh,kw,ik1,ik2,ik3,ik4,ik5,jk1,jk2,jk3,jk4) num_threads(threads)
     for (c = 0; c < C; c++) {
         ik1 = c*kk1;
@@ -454,13 +476,13 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
                     for (h = 0; h < H; h++) {
                         ik5 = ik4 + h*W;
                         for (w = 0; w < W; w++){
-                           IP[ ik5 + w ] = I[ /*jk4 +*/ w];
+                           IP[ ik5 + w ] = I[ /*jk4 +*/ /*w];
 			}
                     }
                 }
             }
         }
-    }
+    }*/
 #ifdef TIMER
     *time = omp_get_wtime() - *time;
     /* char processor_name[MPI_MAX_PROCESSOR_NAME];
