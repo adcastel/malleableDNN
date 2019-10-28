@@ -424,9 +424,16 @@ void FC_gemm_fp(int m, int n, int k, float * A, int lda, float * B, int ldb, flo
     //mkl_domain_set_num_threads(threads, MKL_DOMAIN_BLAS);
 //	printf("FC con %d threads\n",threads);
     omp_set_num_threads(threads);
-    cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
+  /*  #pragma omp parallel
+{
+	printf("Thread %d/%d En gemm \n",omp_get_thread_num(),omp_get_num_threads());
+}*/
+  //  printf("%d,%d,%d\n",m,n,k);
+#ifndef NOGEMM  
+  cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
           m, n, k, 1,
            A, lda, B, ldb, 0, C, ldc);
+#endif
     //printf("FP  FC  GEMM m(%d) : n(%d) : k(%d)\n", m, n, k);
 }
 
@@ -459,9 +466,11 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
     int kk7 = (W + KW);
     int jk1, ik1, ik2, jk2, jk3, jk4, ik3, ik4, ik5;
 //printf("Antes de im2col\n");
-/*
+#ifndef NOIM2COL
+
 #pragma omp parallel for private(b,h,w,kh,kw,ik1,ik2,ik3,ik4,ik5,jk1,jk2,jk3,jk4) num_threads(threads)
     for (c = 0; c < C; c++) {
+//	printf("Thread %d/%d En im2Col it %d\n",omp_get_thread_num(),threads,c);
         ik1 = c*kk1;
         jk1 = c*kk5;
         for (b = 0; b < B; b++) {
@@ -476,13 +485,16 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
                     for (h = 0; h < H; h++) {
                         ik5 = ik4 + h*W;
                         for (w = 0; w < W; w++){
-                           IP[ ik5 + w ] = I[ /*jk4 +*/ /*w];
+                           IP[ ik5 + w ] = I[ /*jk4 +*/ w];
 			}
                     }
                 }
             }
         }
-    }*/
+    }
+
+#endif
+
 #ifdef TIMER
     *time = omp_get_wtime() - *time;
     /* char processor_name[MPI_MAX_PROCESSOR_NAME];
@@ -500,12 +512,19 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
     int lda = m;
     int ldb = k;
     int ldc = m;
+   // printf("%d,%d,%d\n",m,n,k);
 
     //mkl_domain_set_num_threads(threads, MKL_DOMAIN_BLAS);
     omp_set_num_threads(threads);
+/*    #pragma omp parallel
+{
+	printf("Thread %d/%d En gemm de im2col \n",omp_get_thread_num(),omp_get_num_threads());
+}*/
+#ifndef NOGEMM  
     cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
             m, n, k, 1,
             F, lda, IP, ldb, 0, O, ldc);
+#endif
 //printf("despues de gemm\n");
 
     //printf("FP CONV GEMM m(%d) : n(%d)=b(%d).h(%d).w(%d) : k(%d)=c(%d).kh(%d).kw(%d)\n", m, n, B, H, W, k, C, KH, KW);
