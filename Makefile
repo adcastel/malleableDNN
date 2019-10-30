@@ -8,7 +8,7 @@
 
 all: test malleableDNN 
 
-BLISFLAGS := -I/home/adcastel/opt/blis-0-5-1/include/blis/ -L/home /adcastel/opt/blis-0-5-1/lib/ -lblis -lm
+BLISFLAGS := -I/home/adcastel/opt/blis-0-5-1/include/blis/ -L/home/adcastel/opt/blis-0-5-1/lib/ -lblis -lm
 OMPFLAGS := -I/opt/intel/compilers_and_libraries_2017.1.132/linux/compiler/include/ -L/opt/intel/compilers_and_libraries_2017.1.132/linux/compiler/lib/intel64_lin/ -liomp5
 CC := gcc
 CFLAGS := -O3 -Wall  
