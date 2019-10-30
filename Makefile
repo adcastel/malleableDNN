@@ -21,7 +21,7 @@ ifeq ($(DEBUG), 1)
 endif
 
 test:
-	$(CC) test.c -o test $(BLISFLAGS) 
+	$(CC) test.c -o test $(BLISFLAGS) $(OMPFLAGS) 
 	
 malleableDNN:
 	$(CC) malleable_dnn.c -o malleable_dnn $(BLISFLAGS) $(OMPFLAGS)
