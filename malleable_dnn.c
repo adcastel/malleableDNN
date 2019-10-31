@@ -23,7 +23,7 @@
 /* Model features */
 
 #define NUM_STEPS  3  // Steps of the simulation
-#define BATCH_SIZE  64 // Batch size
+//#define BATCH_SIZE  64 // Batch size
 
 ///////////////////////////// PARSER ////////////////////////////////
 #define MAX_LEN 1024
@@ -163,7 +163,7 @@ int main(int argc, char * argv []) {
     double time = 0.0; 
     
     if (argc < 4 ){
-      perror("Usage: ./dnn model.csv steps teams num_threads\n");
+      perror("Usage: ./dnn model.csv steps teams [num_threads] {batch_size]\n");
       exit(-1);
     }
 
@@ -171,6 +171,7 @@ int main(int argc, char * argv []) {
     int teams = atoi(argv[3]);
     int max_threads = (argv[4] == NULL) ? 1 : atoi(argv[4]);
 
+    int BATCH_SIZE = (argv[5] == NULL) ? 64 : atoi(argv[5]);// Batch size
     bli_init();
     rntm_t rntm;
     bli_rntm_init(&rntm);
