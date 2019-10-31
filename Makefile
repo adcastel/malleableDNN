@@ -9,9 +9,10 @@
 all: test malleableDNN 
 
 BLISFLAGS := -I/home/adcastel/opt/blis-0-5-1/include/blis/ -L/home/adcastel/opt/blis-0-5-1/lib/ -lblis -lm
-OMPFLAGS := -I/opt/intel/compilers_and_libraries_2017.1.132/linux/compiler/include/ -L/opt/intel/compilers_and_libraries_2017.1.132/linux/compiler/lib/intel64_lin/ -liomp5
+OMPFLAGS := -I/opt/intel/compilers_and_libraries_2017.1.132/linux/compiler/include/ -L/opt/intel/compilers_and_libraries_2017.1.132/linux/compiler/lib/intel64_lin/ -liomp5 -fopenmp
+OMPFLAGS := -fopenmp
 CC := gcc
-CFLAGS := -O3 -Wall  
+CFLAGS := -O3 #-Wall  
 
 OBJECTS := 
 
@@ -20,11 +21,14 @@ ifeq ($(DEBUG), 1)
     CFLAGS = -g -Wall
 endif
 
+ifeq ($(NOIM2COL), 1)
+    CFLAGS += -DNOIMTOCOL
+endif
 test:
 	$(CC) test.c -o test $(BLISFLAGS) $(OMPFLAGS) 
 	
 malleableDNN:
-	$(CC) malleable_dnn.c -o malleable_dnn $(BLISFLAGS) $(OMPFLAGS)
+	$(CC) $(CFLAGS) malleable_dnn.c -o malleable_dnn $(BLISFLAGS) $(OMPFLAGS)
 clean:
 	rm *.so *.o test malleable_dnn
 

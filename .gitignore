@@ -2,3 +2,4 @@ nbproject
 *.o
 test
 malleable_dnn
+*.dat
