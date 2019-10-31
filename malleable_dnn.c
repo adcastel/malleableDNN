@@ -4,7 +4,8 @@
 #include <math.h>
 #include "omp.h"
 //#include "cblas.h"
-#include "mkl.h"
+//#include "mkl.h"
+#include "blis.h"
 
 #define INPUT -1
 #define FC 0
@@ -73,6 +74,75 @@ int count_layers(FILE *fp){
 
 //void read_model(FILE *fp, param_t *p, model_t *m){
 
+// Esta funcion es para hacer profile, para la version final se llamara
+//a my_gemm()
+double test_gemm(dim_t m, dim_t n, dim_t k, rntm_t &rntm ){
+    
+    obj_t a, b, c;    
+    obj_t alpha, beta;
+    num_t dt_a, dt_b, dt_c, dt_alpha, dt_beta;
+    dim_t m, n, k;
+    double tini, tend;
+    dt_a = BLIS_DOUBLE;    
+    dt_b = BLIS_DOUBLE;    
+    dt_c = BLIS_DOUBLE;    
+    dt_alpha = BLIS_DOUBLE;
+    dt_beta = BLIS_DOUBLE; 
+
+    bli_obj_create( dt_alpha, 1, 1, 0, 0, &alpha ); 
+    bli_obj_create( dt_beta,  1, 1, 0, 0, &beta );  
+                                                
+    bli_obj_create( dt_a, m, k, 0, 0, &a );         
+    bli_obj_create( dt_b, k, n, 0, 0, &b );         
+    bli_obj_create( dt_c, m, n, 0, 0, &c );         
+                                                
+    bli_randm( &a );                                
+    bli_randm( &b );                                
+    bli_randm( &c );                                
+                                                
+                                                
+    bli_setsc(  (0.9/1.0), 0.2, &alpha );           
+    bli_setsc(  (1.0/1.0), 0.0, &beta );            
+
+    for (int i = 1; i <= max_threads; i++){                                                 
+        for (int j = 1; j <= max_threads; j++){                                         
+                for (int q = 1; q <= max_threads; q++){                                 
+                        for (int l = 1; l <= max_threads; l++){                         
+                                if(i*j*q*l > max_threads)                           
+                                        continue;                                   
+                                printf("%d %d %d %d %d ",i,1,j,q,l);                
+                                bli_rntm_set_ways(i,1,j,q,l,&rnmt);                 
+                                tini = bli_clock();                                 
+                                bli_gemm_ex(&alpha, &a, &b, &beta, &c, NULL, &rnmt);
+                                tend = bli_clock();                                 
+                                printf("%f\n", tend-tini);                          
+                                                                                    
+                        }                                                           
+                }                                                                   
+        }                                                                           
+    }                                                                                   
+                                                                                    
+    bli_rntm_set_num_threads(max_threads,&rnmt);                                        
+//bli_rntm_get_ways();                                                              
+    tini = bli_clock();                                                                 
+    bli_gemm_ex(&alpha, &a, &b, &beta, &c, NULL, &rnmt);                                
+    tend = bli_clock();                                                                 
+    printf("Auto %f\n", tend-tini);                                                     
+
+     bli_obj_free( &alpha );           
+       bli_obj_free( &beta );            
+                                   
+ bli_obj_free( &a );               
+ bli_obj_free( &b );               
+ bli_obj_free( &c );               
+
+}
+
+void my_gemm(){
+    
+                                
+
+}
 
 /* helper functions */
 int problem_size(int elements, int nprocs, int rank);
@@ -99,9 +169,14 @@ int main(int argc, char * argv []) {
     int nsteps = atoi(argv[2]);
     int teams = atoi(argv[3]);
 
+    bli_init();
+    rntm_t rntm;
+    bli_rntm_init(&rntm);
+    
     FILE *fp_model, *fp_results;
     int aux, j;
     char auxstr[200], auxstr2[200], *token, *str;
+    
 #ifdef PROGRESS
     printf("Model: %s\n", argv[1]);
 #endif
@@ -307,7 +382,7 @@ int main(int argc, char * argv []) {
 #ifdef TIMER
                             fp_comp_timer[s][l] = omp_get_wtime();
 #endif
-                            FC_gemm_fp(m, n, k, matrix_A, lda, matrix_B, ldb, matrix_C, ldc, threads);
+                            FC_gemm_fp(m, n, k, matrix_A, lda, matrix_B, ldb, matrix_C, ldc, threads, &rntm);
 #ifdef TIMER
                             fp_comp_timer[s][l] = omp_get_wtime() - fp_comp_timer[s][l];
                             m = nneurons[l];
@@ -336,7 +411,7 @@ int main(int argc, char * argv []) {
 				printf("sizes mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", c*b*h*w*aux, c*kw*kh*b*h*w*aux, num_kernels*b*h*w*aux, num_kernels*c*kw*kh*aux);
 #endif
                                 CONV_fp(l, num_kernels, b, h, w, kh, kw, c,
-                                    conv_i, conv_ip, conv_o, conv_f, &fp_im2col_timer[s][l],threads);
+                                    conv_i, conv_ip, conv_o, conv_f, &fp_im2col_timer[s][l],threads,&rntm);
 
 #ifdef TIMER
                                 fp_comp_timer[s][l] = omp_get_wtime() - fp_comp_timer[s][l];
@@ -420,25 +495,26 @@ int main(int argc, char * argv []) {
     return 0;
 }
 
-void FC_gemm_fp(int m, int n, int k, float * A, int lda, float * B, int ldb, float * C, int ldc, int threads) {
+void FC_gemm_fp(int m, int n, int k, float * A, int lda, float * B, int ldb, float * C, int ldc, int threads, rntm_t * rntm) {
     //mkl_domain_set_num_threads(threads, MKL_DOMAIN_BLAS);
 //	printf("FC con %d threads\n",threads);
-    omp_set_num_threads(threads);
+    //omp_set_num_threads(threads);
   /*  #pragma omp parallel
 {
 	printf("Thread %d/%d En gemm \n",omp_get_thread_num(),omp_get_num_threads());
 }*/
   //  printf("%d,%d,%d\n",m,n,k);
 #ifndef NOGEMM  
-  cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
+  /*cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
           m, n, k, 1,
-           A, lda, B, ldb, 0, C, ldc);
+           A, lda, B, ldb, 0, C, ldc);*/
+    test_gemm(m,n,k,rntm);
 #endif
     //printf("FP  FC  GEMM m(%d) : n(%d) : k(%d)\n", m, n, k);
 }
 
 
-void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I, float * IP, float * O, float * F, double * time, int threads) {
+void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I, float * IP, float * O, float * F, double * time, int threads, rntm_t * rntm) {
 
     // B batch size
     // Input image of size H x W, with C channels
@@ -515,15 +591,16 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
    // printf("%d,%d,%d\n",m,n,k);
 
     //mkl_domain_set_num_threads(threads, MKL_DOMAIN_BLAS);
-    omp_set_num_threads(threads);
+    //omp_set_num_threads(threads);
 /*    #pragma omp parallel
 {
 	printf("Thread %d/%d En gemm de im2col \n",omp_get_thread_num(),omp_get_num_threads());
 }*/
 #ifndef NOGEMM  
-    cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
+    /*cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
             m, n, k, 1,
-            F, lda, IP, ldb, 0, O, ldc);
+            F, lda, IP, ldb, 0, O, ldc);*/
+    test_gemm(m,n,k,rntm);
 #endif
 //printf("despues de gemm\n");
 
