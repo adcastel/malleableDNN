@@ -163,7 +163,7 @@ int main(int argc, char * argv []) {
     double time = 0.0; 
     
     if (argc < 4 ){
-      perror("Usage: ./dnn model.csv steps teams [num_threads] {batch_size]\n");
+      perror("Usage: ./dnn model.csv steps teams [num_threads] [batch_size]\n");
       exit(-1);
     }
 
@@ -172,6 +172,7 @@ int main(int argc, char * argv []) {
     int max_threads = (argv[4] == NULL) ? 1 : atoi(argv[4]);
 
     int BATCH_SIZE = (argv[5] == NULL) ? 64 : atoi(argv[5]);// Batch size
+    printf("Model %s. Steps %d. Teams %d. Max threads %d. Batch size %d\n",argv[1],nsteps,teams,max_threads,BATCH_SIZE);
     bli_init();
     rntm_t rntm;
     bli_rntm_init(&rntm);
