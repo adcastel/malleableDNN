@@ -150,7 +150,7 @@ void FC_gemm_fp(int m, int n, int k, float * A, int lda, float * B, int ldb, flo
 }
 #else
 void FC_gemm_fp(obj_t * a, obj_t *b, obj_t *c, obj_t * alpha, obj_t * beta ,rntm_t * rntm){
-    bli_gemm_ex(alpha, a, b, beta, c, NULL, rnmt);
+    bli_gemm_ex(alpha, a, b, beta, c, NULL, rntm);
 }
 #endif
 
@@ -228,7 +228,7 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
             m, n, k, 1,
             F, lda, IP, ldb, 0, O, ldc);*/
     //test_gemm(m,n,k,max_threads,rntm);
-    bli_gemm_ex(alpha, a, F, beta, O, NULL, rnmt);
+    bli_gemm_ex(alpha, a, F, beta, O, NULL, rntm);
 #endif
 //printf("despues de gemm\n");
 
@@ -281,9 +281,13 @@ int main(int argc, char * argv []) {
 
     int BATCH_SIZE = (argv[5] == NULL) ? 64 : atoi(argv[5]);// Batch size
     printf("Model %s. Steps %d. Teams %d. Max threads %d. Batch size %d\n",argv[1],nsteps,teams,max_threads,BATCH_SIZE);
+    
     bli_init();
-    rntm_t rntm;
-    bli_rntm_init(&rntm);
+    rntm_t * rntm = malloc(sizeof(rntm_t)*teams);
+    for(int t = 0; t< teams; t++){
+    	bli_rntm_init(&rntm[t]);
+   	bli_rntm_set_ways(1,1,max_threads,1,1,&rntm[t]);
+    } 
     
     FILE *fp_model, *fp_results;
     int aux, j;
@@ -439,13 +443,14 @@ int main(int argc, char * argv []) {
             200, 200, 200, 1,
             matrix_A, 200, matrix_B, 200, 0, matrix_C, 200);
     */   
-     int threads = omp_warm/teams;
+     int threads = max_threads/teams;
 
    // printf("Tengo %d threads repartidos en %d teams de %d threads\n",omp_warm,teams,threads);
         time = omp_get_wtime();
         #pragma omp parallel num_threads(teams)
 	{
     //	printf("Thread %d con team de %d threads reservando memoria...\n",omp_get_thread_num(), threads);
+	int id = omp_get_thread_num();
 	
         obj_t * a = malloc(sizeof(obj_t) * NUM_LAYERS);    
         obj_t * b = malloc(sizeof(obj_t) * NUM_LAYERS);    
@@ -463,24 +468,27 @@ int main(int argc, char * argv []) {
         bli_obj_create( dt_beta,  1, 1, 0, 0, &beta );  
         
         int o;
-        for(o = 0; o < NUM_LAYERS; o++){
+        for(o = 1; o < NUM_LAYERS; o++){
             dim_t m, n, k;
-            if(type[l] == FC){
-                m = nneurons[l]; //nneurons[l]/procs[l];//antes /size
+            if(type[o] == FC){
+                m = nneurons[o]; //nneurons[l]/procs[l];//antes /size
                 n = BATCH_SIZE;
-                k = nneurons[l - 1];
+                k = nneurons[o - 1];
                 
                              //We need to reshape if the previous one was CONV            
             }
             else{
-                if(type[l] == CONV){
-                    m = nkernels[l];
-                    n = BATCH_SIZE * image_size[l - 1]*image_size[l - 1];
-                    k = channels[l - 1] * kheight[l] * kwidth[l];
+                if(type[o] == CONV){
+                    m = nkernels[o];
+                    n = BATCH_SIZE * image_size[o - 1]*image_size[o - 1];
+                    k = channels[o - 1] * kheight[o] * kwidth[o];
                     
                     
                 }
             }
+#ifdef PROGRESS
+		printf("ID %d Layer %d Type %s %dx%dx%d\n", id, o, (type[o] == FC) ? "FC" : "CONV", m,n,k);
+#endif
                     bli_obj_create( dt_a, m, k, 0, 0, &a[o] );         
                     bli_obj_create( dt_b, k, n, 0, 0, &b[o] );         
                     bli_obj_create( dt_c, m, n, 0, 0, &c[o] );         
@@ -497,11 +505,12 @@ int main(int argc, char * argv []) {
         
     	float * conv_i = malloc(max_i * sizeof (float));
     	float * conv_ip = malloc(max_ip * sizeof (float));
-    	
+        #pragma omp barrier 
+	
 	#pragma omp for private(l)
         for (s = 0; s < nsteps; s++) {
 #ifdef PROGRESS
-            printf("Starting Step %d\n", s);
+            printf("ID %d Starting Step %d\n", id, s);
 #endif
 #ifdef TIMER
             step_timer[s] = omp_get_wtime();
@@ -510,14 +519,12 @@ int main(int argc, char * argv []) {
             for (l = 1; l < NUM_LAYERS; l++) {
     //	printf("Thread %d em step %d layer %d...\n",omp_get_thread_num(),s,l);
 #ifdef PROGRESS
-                printf("FP layer %d ",l);
+                printf("ID %d FP layer %d ",id, l);
 #endif
-                        printf("Layer %d ", l);
                         if (type[l] == FC) { //FC
 #ifdef PROGRESS
                 		printf("FC \n");
 #endif
-                		printf("FC \n");
 #ifdef TESTGEMMS
 
                             int m = nneurons[l]; //nneurons[l]/procs[l];//antes /size
@@ -527,18 +534,23 @@ int main(int argc, char * argv []) {
                             int ldb = k;
                             int ldc = m;
 #endif
+#ifdef PROGRESS
+
+			    printf("ID %d GEMM %dx%dx%d\n",id, nneurons[l],BATCH_SIZE,nneurons[l-1]);
+
+#endif
 #ifdef TIMER
                             fp_comp_timer[s][l] = omp_get_wtime();
 #endif
 #ifdef TESTGEMMS
                             FC_gemm_fp(m, n, k, matrix_A, lda, matrix_B, ldb, matrix_C, ldc, threads, max_threads, &rntm);
 #else
-                            FC_gemm_fp(&a[l],b[l],c[l], alpha, beta, &rntm);
+                            FC_gemm_fp(&a[l],&b[l],&c[l], &alpha, &beta, &rntm[id]);
 #endif
 #ifdef TIMER
                             fp_comp_timer[s][l] = omp_get_wtime() - fp_comp_timer[s][l];
-                            m = nneurons[l];
-                            fp_comp_gflops[s][l] = (2.0 * m * n * k / fp_comp_timer[s][l]) / (1.0e+9);
+                            
+                            fp_comp_gflops[s][l] = (2.0 * nneurons[l] * BATCH_SIZE * nneurons[l-1] / fp_comp_timer[s][l]) / (1.0e+9);
                             fp_comp_gflops_per_thread[s][l] = fp_comp_gflops[s][l] / (1.0 * OMP_NUM_THREADS);
 #endif
 
@@ -547,9 +559,8 @@ int main(int argc, char * argv []) {
 #ifdef PROGRESS
 				printf("CONV \n");
 #endif
-				printf("CONV \n");
                                 int num_kernels = nkernels[l]; //nneurons[l]/procs[l];//antes /size
-                                int b = BATCH_SIZE;
+                                int bs = BATCH_SIZE;
                                 int h = image_size[l - 1];
                                 int w = image_size[l - 1];
                                 int ch = channels[l - 1];
@@ -559,21 +570,21 @@ int main(int argc, char * argv []) {
                                 fp_comp_timer[s][l] = omp_get_wtime();
 #endif
 #ifdef PROGRESS
-                                printf("%d, %d, %d, %d, %d,%d, %d\n",num_kernels, b, h, w, kh, kw, c);
+                                printf("ID %d %d, %d, %d, %d, %d,%d, %d\n",id, num_kernels, b, h, w, kh, kw, c);
 				size_t aux = 1;
-				printf("sizes mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", c*b*h*w*aux, c*kw*kh*b*h*w*aux, num_kernels*b*h*w*aux, num_kernels*c*kw*kh*aux);
+				printf("sizes mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", ch*bs*h*w*aux, ch*kw*kh*bs*h*w*aux, num_kernels*bs*h*w*aux, num_kernels*ch*kw*kh*aux);
 #endif
-                                CONV_fp(l, num_kernels, b, h, w, kh, kw, ch,
-                                    conv_i, conv_ip, &a[o], &b[o], &c[o], 
+                                CONV_fp(l, num_kernels, bs, h, w, kh, kw, ch,
+                                    conv_i, conv_ip, &a[l], &b[l], &c[l], 
                                         &alpha, &beta, &fp_im2col_timer[s][l],
-                                        threads,max_threads, &rntm);
+                                        threads,max_threads, &rntm[id]);
 
 #ifdef TIMER
                                 fp_comp_timer[s][l] = omp_get_wtime() - fp_comp_timer[s][l];
-                                int m = nkernels[l];
-                                int n = b * h * w;
-                                int k = c * kh *kw;
-                                fp_comp_gflops[s][l] = (2.0 * m * n * k / fp_comp_timer[s][l]) / (1.0e+9);
+                                //int m = nkernels[l];
+                                int nn = bs * h * w;
+                                int kk = ch * kh *kw;
+                                fp_comp_gflops[s][l] = (2.0 * nkernels[l] * nn * kk / fp_comp_timer[s][l]) / (1.0e+9);
                                 fp_comp_gflops_per_thread[s][l] = fp_comp_gflops[s][l] / (1.0 * OMP_NUM_THREADS);
 #endif
                            }

@@ -24,6 +24,13 @@ endif
 ifeq ($(NOIM2COL), 1)
     CFLAGS += -DNOIMTOCOL
 endif
+
+ifeq ($(PROGRESS), 1)
+    CFLAGS += -DPROGRESS
+endif
+ifeq ($(TIMER), 1)
+    CFLAGS += -DTIMER
+endif
 test:
 	$(CC) test.c -o test $(BLISFLAGS) $(OMPFLAGS) 
 	
