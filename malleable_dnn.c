@@ -277,12 +277,14 @@ int main(int argc, char * argv []) {
     int nsteps = atoi(argv[2]);
     int teams = atoi(argv[3]);
     int max_threads = (argv[4] == NULL) ? 1 : atoi(argv[4]);
-
+    int max, min;
     int BATCH_SIZE = (argv[5] == NULL) ? 64 : atoi(argv[5]);// Batch size
     int malleable = (argv[6] == NULL) ? 0 : atoi(argv[6]);// 0 or 1
     if(malleable){
         teams = 2;
         max_threads = 10;
+        max = 6;
+        min =4;
     }
     int change = (argv[7] == NULL) ? 0 : atoi(argv[7]);// 0 or 1
 
@@ -464,7 +466,7 @@ int main(int argc, char * argv []) {
 		threads++;
         }
         else{
-            threads = (id == 0) ? 8 : 2;
+            threads = (id == 0) ? max : min;
         }
         bli_rntm_set_ways(1,1,threads,1,1,&rntm[id]);
     	printf("Thread %d con team de %d threads reservando memoria...\n",id, threads);
@@ -537,9 +539,9 @@ int main(int argc, char * argv []) {
             for (l = 1; l < NUM_LAYERS; l++) {
     //	printf("Thread %d em step %d layer %d...\n",omp_get_thread_num(),s,l);
             if(change == l){
-                printf("Malleable! Layer %d my id %d\n",l,id);
-                bli_rntm_set_active_ways(1,1,2,1,1,&rntm[id]);
-                bli_rntm_set_active_ways(1,1,8,1,1,&rntm[!id]);
+                printf("Malleable! from %d to %d Layer %d my id %d\n",max,min,l,id );
+                bli_rntm_set_active_ways(1,1,min,1,1,&rntm[id]);
+                bli_rntm_set_active_ways(1,1,max,1,1,&rntm[!id]);
             }
 #ifdef PROGRESS
                 printf("ID %d FP layer %d ",id, l);
