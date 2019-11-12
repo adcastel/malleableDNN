@@ -31,6 +31,9 @@ endif
 ifeq ($(TIMER), 1)
     CFLAGS += -DTIMER
 endif
+ifeq ($(SUMMARY), 1)
+    CFLAGS += -DSUMMARY
+endif
 test:
 	$(CC) test.c -o test $(BLISFLAGS) $(OMPFLAGS) 
 	

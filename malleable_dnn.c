@@ -184,8 +184,8 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
     int kk7 = (W + KW);
     int jk1, ik1, ik2, jk2, jk3, jk4, ik3, ik4, ik5;
 #ifndef NOIM2COL
-
-#pragma omp parallel for private(b,h,w,kh,kw,ik1,ik2,ik3,ik4,ik5,jk1,jk2,jk3,jk4) num_threads(threads)
+	int active = (threads > 2)? 2 : threads;
+#pragma omp parallel for private(b,h,w,kh,kw,ik1,ik2,ik3,ik4,ik5,jk1,jk2,jk3,jk4) num_threads(active)
     for (c = 0; c < C; c++) {
         ik1 = c*kk1;
         jk1 = c*kk5;
@@ -268,7 +268,6 @@ int main(int argc, char * argv []) {
 
     int rank, size, i, s, l;
     double alpha = 1.0, beta = 0.0;
-    double time = 0.0; 
     
     if (argc < 4 ){
       perror("Usage: ./dnn model.csv steps teams [num_threads] [batch_size]\n");
@@ -289,6 +288,7 @@ int main(int argc, char * argv []) {
    	bli_rntm_set_ways(1,1,max_threads,1,1,&rntm[t]);
     } 
     
+    double * time = malloc(sizeof(double)*teams); 
     FILE *fp_model, *fp_results;
     int aux, j;
     char auxstr[200], auxstr2[200], *token, *str;
@@ -443,14 +443,18 @@ int main(int argc, char * argv []) {
             200, 200, 200, 1,
             matrix_A, 200, matrix_B, 200, 0, matrix_C, 200);
     */   
-     int threads = max_threads/teams;
 
    // printf("Tengo %d threads repartidos en %d teams de %d threads\n",omp_warm,teams,threads);
-        time = omp_get_wtime();
         #pragma omp parallel num_threads(teams)
 	{
     //	printf("Thread %d con team de %d threads reservando memoria...\n",omp_get_thread_num(), threads);
 	int id = omp_get_thread_num();
+     	int threads = max_threads/teams;
+	int extra = max_threads % teams;
+	if (id < extra)
+		threads++;
+   	bli_rntm_set_ways(1,1,threads,1,1,&rntm[id]);
+    	printf("Thread %d con team de %d threads reservando memoria...\n",id, threads);
 	
         obj_t * a = malloc(sizeof(obj_t) * NUM_LAYERS);    
         obj_t * b = malloc(sizeof(obj_t) * NUM_LAYERS);    
@@ -507,7 +511,8 @@ int main(int argc, char * argv []) {
     	float * conv_ip = malloc(max_ip * sizeof (float));
         #pragma omp barrier 
 	
-	#pragma omp for private(l)
+        time[id] = omp_get_wtime();
+	#pragma omp for private(l) schedule(dynamic,1) nowait
         for (s = 0; s < nsteps; s++) {
 #ifdef PROGRESS
             printf("ID %d Starting Step %d\n", id, s);
@@ -570,7 +575,7 @@ int main(int argc, char * argv []) {
                                 fp_comp_timer[s][l] = omp_get_wtime();
 #endif
 #ifdef PROGRESS
-                                printf("ID %d %d, %d, %d, %d, %d,%d, %d\n",id, num_kernels, b, h, w, kh, kw, c);
+                                printf("ID %d %d, %d, %d, %d, %d,%d, %d\n",id, num_kernels, bs, h, w, kh, kw, ch);
 				size_t aux = 1;
 				printf("sizes mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", ch*bs*h*w*aux, ch*kw*kh*bs*h*w*aux, num_kernels*bs*h*w*aux, num_kernels*ch*kw*kh*aux);
 #endif
@@ -606,8 +611,9 @@ int main(int argc, char * argv []) {
             step_timer[s] = omp_get_wtime() - step_timer[s];
 #endif
         } //steps
+        time[id] = omp_get_wtime() - time[id];
+    	printf("ID %d, Total %d steps, batches %d, teams %d => time %f (s)\n", id, nsteps/teams, BATCH_SIZE, teams, time[id]);
 	} //parallel
-        time = omp_get_wtime() - time;
 #ifdef TIMER
 #ifndef SUMMARY
             double total_time = 0.0;
