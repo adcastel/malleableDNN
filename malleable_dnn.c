@@ -454,14 +454,15 @@ int main(int argc, char * argv []) {
 	{
     //	printf("Thread %d con team de %d threads reservando memoria...\n",omp_get_thread_num(), threads);
 	int id = omp_get_thread_num();
+        int threads;
      	if(!malleable){
-            int threads = max_threads/teams;
+            threads = max_threads/teams;
             int extra = max_threads % teams;
             if (id < extra)
 		threads++;
         }
         else{
-            int threads = (id == 0) ? 8 : 2;
+            threads = (id == 0) ? 8 : 2;
         }
         bli_rntm_set_ways(1,1,threads,1,1,&rntm[id]);
     	printf("Thread %d con team de %d threads reservando memoria...\n",id, threads);
