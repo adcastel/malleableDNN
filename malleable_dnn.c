@@ -270,7 +270,7 @@ int main(int argc, char * argv []) {
     double alpha = 1.0, beta = 0.0;
     
     if (argc < 4 ){
-      perror("Usage: ./dnn model.csv steps teams [num_threads] [batch_size]\n");
+      perror("Usage: ./dnn model.csv steps teams [num_threads] [batch_size] [malleable] [change] [min] [max]\n");
       exit(-1);
     }
 
@@ -283,8 +283,9 @@ int main(int argc, char * argv []) {
     if(malleable){
         teams = 2;
         max_threads = 10;
-        max = 6;
-        min =4;
+        min =(argv[8] == NULL) ? 2 : atoi(argv[8]);
+        max = (argv[9] == NULL) ? 8 : atoi(argv[9]);;
+        
     }
     int change = (argv[7] == NULL) ? 0 : atoi(argv[7]);// 0 or 1
 
