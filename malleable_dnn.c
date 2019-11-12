@@ -279,7 +279,12 @@ int main(int argc, char * argv []) {
     int max_threads = (argv[4] == NULL) ? 1 : atoi(argv[4]);
 
     int BATCH_SIZE = (argv[5] == NULL) ? 64 : atoi(argv[5]);// Batch size
-    printf("Model %s. Steps %d. Teams %d. Max threads %d. Batch size %d\n",argv[1],nsteps,teams,max_threads,BATCH_SIZE);
+    int malleable = (argv[6] == NULL) ? 0 : atoi(argv[6]);// 0 or 1
+    if(malleable){
+        teams = 2;
+        max_threads = 10;
+    }
+    printf("Model %s. Malleable %d. Steps %d. Teams %d. Max threads %d. Batch size %d\n",argv[1],malleable,nsteps,teams,max_threads,BATCH_SIZE);
     
     bli_init();
     rntm_t * rntm = malloc(sizeof(rntm_t)*teams);
@@ -449,11 +454,16 @@ int main(int argc, char * argv []) {
 	{
     //	printf("Thread %d con team de %d threads reservando memoria...\n",omp_get_thread_num(), threads);
 	int id = omp_get_thread_num();
-     	int threads = max_threads/teams;
-	int extra = max_threads % teams;
-	if (id < extra)
+     	if(!malleable){
+            int threads = max_threads/teams;
+            int extra = max_threads % teams;
+            if (id < extra)
 		threads++;
-   	bli_rntm_set_ways(1,1,threads,1,1,&rntm[id]);
+        }
+        else{
+            int threads = (id == 0) ? 8 : 2;
+        }
+        bli_rntm_set_ways(1,1,threads,1,1,&rntm[id]);
     	printf("Thread %d con team de %d threads reservando memoria...\n",id, threads);
 	
         obj_t * a = malloc(sizeof(obj_t) * NUM_LAYERS);    
