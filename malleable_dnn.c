@@ -284,7 +284,9 @@ int main(int argc, char * argv []) {
         teams = 2;
         max_threads = 10;
     }
-    printf("Model %s. Malleable %d. Steps %d. Teams %d. Max threads %d. Batch size %d\n",argv[1],malleable,nsteps,teams,max_threads,BATCH_SIZE);
+    int change = (argv[7] == NULL) ? 0 : atoi(argv[7]);// 0 or 1
+
+    printf("Model %s. Malleable %d. Change %d. Steps %d. Teams %d. Max threads %d. Batch size %d\n",argv[1],malleable,change,nsteps,teams,max_threads,BATCH_SIZE);
     
     bli_init();
     rntm_t * rntm = malloc(sizeof(rntm_t)*teams);
@@ -534,6 +536,11 @@ int main(int argc, char * argv []) {
             //Forward pass
             for (l = 1; l < NUM_LAYERS; l++) {
     //	printf("Thread %d em step %d layer %d...\n",omp_get_thread_num(),s,l);
+            if(change == l){
+                printf("Malleable! Layer %d my id %d\n",l,id);
+                bli_rntm_set_active_ways(1,1,2,1,1,&rntm[id]);
+                bli_rntm_set_active_ways(1,1,8,1,1,&rntm[!id]);
+            }
 #ifdef PROGRESS
                 printf("ID %d FP layer %d ",id, l);
 #endif
