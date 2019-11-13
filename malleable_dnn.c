@@ -184,7 +184,7 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I
     int kk7 = (W + KW);
     int jk1, ik1, ik2, jk2, jk3, jk4, ik3, ik4, ik5;
 #ifndef NOIM2COL
-	int active = (threads > 2)? 2 : threads;
+	int active = (threads > 4)? 4 : threads;
 #pragma omp parallel for private(b,h,w,kh,kw,ik1,ik2,ik3,ik4,ik5,jk1,jk2,jk3,jk4) num_threads(active)
     for (c = 0; c < C; c++) {
         ik1 = c*kk1;
