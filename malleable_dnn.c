@@ -22,7 +22,7 @@
 
 /* Model features */
 
-#define NUM_STEPS  3  // Steps of the simulation
+//#define NUM_STEPS  3  // Steps of the simulation
 //#define BATCH_SIZE  64 // Batch size
 
 ///////////////////////////// PARSER ////////////////////////////////
@@ -263,6 +263,19 @@ int problem_size(int elements, int nprocs, int rank) {
 
 
 /* Communication functions */
+void  init_batch_size(int * BATCH_SIZE,int nsteps,int BATCH_SIZE_V, int * max_batch){
+	int i;
+	srand (2017);
+	*max_batch = BATCH_SIZE_V;
+	for(i=0; i<nsteps; i++){
+		BATCH_SIZE[i] = (BATCH_SIZE_V > 0) ? BATCH_SIZE_V : (pow(64,rand() % 2)) ;
+		//BATCH_SIZE[i] = (BATCH_SIZE_V > 0) ? BATCH_SIZE_V : ((rand() % 8)+1) ;
+		if(BATCH_SIZE[i] > *max_batch) *max_batch = BATCH_SIZE[i];
+		printf("BATCH_SIZE[%d] = %d\n", i, BATCH_SIZE[i]);
+	} 
+	//printf("max_batch = %d\n", *max_batch);
+
+}
 
 int main(int argc, char * argv []) {
 
@@ -277,8 +290,10 @@ int main(int argc, char * argv []) {
     int nsteps = atoi(argv[2]);
     int teams = atoi(argv[3]);
     int max_threads = (argv[4] == NULL) ? 1 : atoi(argv[4]);
-    int max, min;
-    int BATCH_SIZE = (argv[5] == NULL) ? 64 : atoi(argv[5]);// Batch size
+    int max, min, max_batch = 0;
+    int BATCH_SIZE_V = (argv[5] == NULL) ? 0 : atoi(argv[5]);// Batch size. if 0, random values
+    int * BATCH_SIZE = malloc (sizeof(int)*nsteps);
+    init_batch_size(BATCH_SIZE,nsteps,BATCH_SIZE_V, &max_batch);
     int malleable = (argv[6] == NULL) ? 0 : atoi(argv[6]);// 0 or 1
     if(malleable){
         teams = 2;
@@ -288,14 +303,14 @@ int main(int argc, char * argv []) {
         
     }
     int change = (argv[7] == NULL) ? 0 : atoi(argv[7]);// 0 or 1
-
-    printf("Model %s. Malleable %d. Change %d. Steps %d. Teams %d. Max threads %d. Batch size %d\n",argv[1],malleable,change,nsteps,teams,max_threads,BATCH_SIZE);
+    printf("Model %s. Malleable %d. Change %d. Steps %d. Teams %d. Max threads %d. Batch size %s\n",argv[1],malleable,change,nsteps,teams,max_threads,(argv[5]==0)?"Rand":argv[5]);
     
     bli_init();
     rntm_t * rntm = malloc(sizeof(rntm_t)*teams);
+    int * current = malloc(sizeof(int)*teams);
     for(int t = 0; t< teams; t++){
     	bli_rntm_init(&rntm[t]);
-   	bli_rntm_set_ways(1,1,max_threads,1,1,&rntm[t]);
+   	bli_rntm_set_ways(1,1,(malleable == 0) ? max_threads : max ,1,1,&rntm[t]);
     } 
     
     double * time = malloc(sizeof(double)*teams); 
@@ -387,8 +402,8 @@ int main(int argc, char * argv []) {
     /* Model */
 
 
-    const char* env = getenv("OMP_NUM_THREADS");
-    int OMP_NUM_THREADS = (env != NULL) ? atoi(env) : 1;
+    //const char* env = getenv("OMP_NUM_THREADS");
+    //int OMP_NUM_THREADS = (env != NULL) ? atoi(env) : 1;
 
 
     
@@ -409,20 +424,15 @@ int main(int argc, char * argv []) {
         }
     }
 
-    /* This matrices are for FC layers */
-   /* float * matrix_A = malloc(max_size_fc * sizeof ( float));
-    float * matrix_B = malloc(max_size_fc * sizeof ( float));
-    float * matrix_C = malloc(max_size_fc * sizeof ( float));
-*/
-    size_t max_i = 0;//channels[0] * BATCH_SIZE * image_size[0] * image_size[0];
-    size_t max_ip = 0;//channels[0] * kwidth[0] * kheight[0] * BATCH_SIZE * image_size[0] * image_size[0];
-    size_t max_o = 0;//nkernels[0] * BATCH_SIZE * image_size[0] * image_size[0];
-    size_t max_f = 0;//nkernels[0] * channels[0] * kwidth[0] * kheight[0];
+    size_t max_i = 0;
+    size_t max_ip = 0;
+    size_t max_o = 0;
+    size_t max_f = 0;
     for (l = 1; l < NUM_LAYERS; l++) {
         if (type[l] == CONV) {
-            size_t mi = channels[l-1] * BATCH_SIZE * image_size[l-1] * image_size[l-1];
-            size_t mip = channels[l-1] * kwidth[l] * kheight[l] * BATCH_SIZE * image_size[l-1] * image_size[l-1];
-            size_t mo = nkernels[l] * BATCH_SIZE * image_size[l-1] * image_size[l-1];
+            size_t mi = channels[l-1] * max_batch * image_size[l-1] * image_size[l-1];
+            size_t mip = channels[l-1] * kwidth[l] * kheight[l] * max_batch * image_size[l-1] * image_size[l-1];
+            size_t mo = nkernels[l] * max_batch * image_size[l-1] * image_size[l-1];
             size_t mf = nkernels[l] * channels[l-1] * kwidth[l] * kheight[l];
             if (mi > max_i) {
                 max_i = mi;
@@ -468,6 +478,7 @@ int main(int argc, char * argv []) {
         }
         else{
             threads = (id == 0) ? max : min;
+	    current[id] = (id == 0) ? max : min;
         }
         bli_rntm_set_ways(1,1,threads,1,1,&rntm[id]);
     	printf("Thread %d con team de %d threads reservando memoria...\n",id, threads);
@@ -492,7 +503,7 @@ int main(int argc, char * argv []) {
             dim_t m, n, k;
             if(type[o] == FC){
                 m = nneurons[o]; //nneurons[l]/procs[l];//antes /size
-                n = BATCH_SIZE;
+                n = max_batch;
                 k = nneurons[o - 1];
                 
                              //We need to reshape if the previous one was CONV            
@@ -500,7 +511,7 @@ int main(int argc, char * argv []) {
             else{
                 if(type[o] == CONV){
                     m = nkernels[o];
-                    n = BATCH_SIZE * image_size[o - 1]*image_size[o - 1];
+                    n = max_batch * image_size[o - 1]*image_size[o - 1];
                     k = channels[o - 1] * kheight[o] * kwidth[o];
                     
                     
@@ -522,7 +533,7 @@ int main(int argc, char * argv []) {
         bli_setsc(  (1.0/1.0), 0.0, &beta );            
 
         
-        
+        int steps_by_id=0;
     	float * conv_i = malloc(max_i * sizeof (float));
     	float * conv_ip = malloc(max_ip * sizeof (float));
         #pragma omp barrier 
@@ -534,15 +545,19 @@ int main(int argc, char * argv []) {
             printf("ID %d Starting Step %d\n", id, s);
 #endif
 #ifdef TIMER
-            step_timer[s] = omp_get_wtime();
+            step_timer[s] = bli_clock();
 #endif
+	    steps_by_id++;
             //Forward pass
             for (l = 1; l < NUM_LAYERS; l++) {
-    //	printf("Thread %d em step %d layer %d...\n",omp_get_thread_num(),s,l);
+    	//printf("Thread %d em step %d layer %d...\n",omp_get_thread_num(),s,l);
+    	        //printf("ID %d step %d layer %d current %d\n", id, s, l, current[id]);
             if(change == l){
-                printf("Malleable! from %d to %d Layer %d my id %d\n",max,min,l,id );
-                bli_rntm_set_active_ways(1,1,min,1,1,&rntm[id]);
+        //        printf("Malleable! from %d to %d Layer %d my id %d\n",max,min,l,id );
                 bli_rntm_set_active_ways(1,1,max,1,1,&rntm[!id]);
+                bli_rntm_set_active_ways(1,1,min,1,1,&rntm[id]);
+		current[id] = min;
+		current[!id] = max;
             }
 #ifdef PROGRESS
                 printf("ID %d FP layer %d ",id, l);
@@ -554,16 +569,15 @@ int main(int argc, char * argv []) {
 #ifdef TESTGEMMS
 
                             int m = nneurons[l]; //nneurons[l]/procs[l];//antes /size
-                            int n = BATCH_SIZE;
+                            int n = BATCH_SIZE[s];
                             int k = nneurons[l - 1]; //We need to reshape if the previous one was CONV
                             int lda = m;
                             int ldb = k;
                             int ldc = m;
-#endif
-#ifdef PROGRESS
-
-			    printf("ID %d GEMM %dx%dx%d\n",id, nneurons[l],BATCH_SIZE,nneurons[l-1]);
-
+			   /*obj_t va, vb, vc;
+				bli_acquire_mpart( 0, 0, m, k, &a[l], &va );
+				bli_acquire_mpart( 0, 0, k, n, &b[l], &vb );
+				bli_acquire_mpart( 0, 0, m, n, &c[l], &vc );*/
 #endif
 #ifdef TIMER
                             fp_comp_timer[s][l] = omp_get_wtime();
@@ -571,13 +585,25 @@ int main(int argc, char * argv []) {
 #ifdef TESTGEMMS
                             FC_gemm_fp(m, n, k, matrix_A, lda, matrix_B, ldb, matrix_C, ldc, threads, max_threads, &rntm);
 #else
-                            FC_gemm_fp(&a[l],&b[l],&c[l], &alpha, &beta, &rntm[id]);
+                            int m = nneurons[l]; //nneurons[l]/procs[l];//antes /size
+                            int n = BATCH_SIZE[s];
+                            int k = nneurons[l - 1]; //We need to reshape if the previous one was CONV
+			   obj_t va, vb, vc;
+#ifdef PROGRESS
+
+			    printf("ID %d GEMM %dx%dx%d\n",id, m,n,k);
+
+#endif
+				bli_acquire_mpart( 0, 0, m, k, &a[l], &va );
+				bli_acquire_mpart( 0, 0, k, n, &b[l], &vb );
+				bli_acquire_mpart( 0, 0, m, n, &c[l], &vc );
+                            FC_gemm_fp(&va,&vb,&vc, &alpha, &beta, &rntm[id]);
 #endif
 #ifdef TIMER
                             fp_comp_timer[s][l] = omp_get_wtime() - fp_comp_timer[s][l];
                             
-                            fp_comp_gflops[s][l] = (2.0 * nneurons[l] * BATCH_SIZE * nneurons[l-1] / fp_comp_timer[s][l]) / (1.0e+9);
-                            fp_comp_gflops_per_thread[s][l] = fp_comp_gflops[s][l] / (1.0 * OMP_NUM_THREADS);
+                            fp_comp_gflops[s][l] = (2.0 * nneurons[l] * BATCH_SIZE[s] * nneurons[l-1] / fp_comp_timer[s][l]) / (1.0e+9);
+                            fp_comp_gflops_per_thread[s][l] = fp_comp_gflops[s][l] / (1.0 /* * OMP_NUM_THREADS*/);
 #endif
 
                         } else { //conv
@@ -586,7 +612,7 @@ int main(int argc, char * argv []) {
 				printf("CONV \n");
 #endif
                                 int num_kernels = nkernels[l]; //nneurons[l]/procs[l];//antes /size
-                                int bs = BATCH_SIZE;
+                                int bs = BATCH_SIZE[s];
                                 int h = image_size[l - 1];
                                 int w = image_size[l - 1];
                                 int ch = channels[l - 1];
@@ -600,8 +626,16 @@ int main(int argc, char * argv []) {
 				size_t aux = 1;
 				printf("sizes mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", ch*bs*h*w*aux, ch*kw*kh*bs*h*w*aux, num_kernels*bs*h*w*aux, num_kernels*ch*kw*kh*aux);
 #endif
+                    	int m = nkernels[l];
+                    	int n = bs * image_size[l - 1]*image_size[l - 1];
+                    	int k = channels[l - 1] * kheight[l] * kwidth[l];
+			        obj_t va, vb, vc;
+				
+				bli_acquire_mpart( 0, 0, m, k, &a[l], &va );
+				bli_acquire_mpart( 0, 0, k, n, &b[l], &vb );
+				bli_acquire_mpart( 0, 0, m, n, &c[l], &vc );
                                 CONV_fp(l, num_kernels, bs, h, w, kh, kw, ch,
-                                    conv_i, conv_ip, &a[l], &b[l], &c[l], 
+                                    conv_i, conv_ip, &va, &vb, &vc, 
                                         &alpha, &beta, &fp_im2col_timer[s][l],
                                         threads,max_threads, &rntm[id]);
 
@@ -611,7 +645,7 @@ int main(int argc, char * argv []) {
                                 int nn = bs * h * w;
                                 int kk = ch * kh *kw;
                                 fp_comp_gflops[s][l] = (2.0 * nkernels[l] * nn * kk / fp_comp_timer[s][l]) / (1.0e+9);
-                                fp_comp_gflops_per_thread[s][l] = fp_comp_gflops[s][l] / (1.0 * OMP_NUM_THREADS);
+                                fp_comp_gflops_per_thread[s][l] = fp_comp_gflops[s][l] / (1.0 /* * OMP_NUM_THREADS*/);
 #endif
                            }
 			   else{
@@ -629,23 +663,37 @@ int main(int argc, char * argv []) {
                     }
 
 #ifdef TIMER
-            step_timer[s] = omp_get_wtime() - step_timer[s];
+            step_timer[s] = bli_clock() - step_timer[s];
+#ifdef PROGRESS
+	    printf("Time step %d = %f\n",s,step_timer[s]);
+#endif
 #endif
         } //steps
         time[id] = omp_get_wtime() - time[id];
-    	printf("ID %d, Total %d steps, batches %d, teams %d => time %f (s)\n", id, nsteps/teams, BATCH_SIZE, teams, time[id]);
+    	printf("ID %d, Total %d steps, batches %d, teams %d => time %f (s)\n", id, steps_by_id, BATCH_SIZE_V, teams, time[id]);
+	
+    	FILE *fp_results;
+	char buffer[32];
+       snprintf(buffer, sizeof(char) * 32, "res_team%d.dat", id);
+
+	fp_results= fopen(buffer,"w");
+	for(int h = 1; h < NUM_LAYERS; h++){
+		//fprintf(fp_results, "%s", bli_printm("matrix 'a1'", &c[h],"%5.1f",""));
+		bli_fprintm(fp_results,"matrix 'a1'", &c[h],"%5.1f","");
+	}
+	fclose(fp_results);
 	} //parallel
 #ifdef TIMER
 #ifndef SUMMARY
             double total_time = 0.0;
             for (s = 0; s < nsteps; s++) {
-                printf("STEP %d\nTime %f\n", s, step_timer[s]);
+                printf("STEP %d\n Batch %d Time %f\n", s, BATCH_SIZE[s],step_timer[s]);
                 printf("\t **** FP ****\n");
                 for (l = 1; l < NUM_LAYERS; l++) {
                     printf("\t Layer %d (type %s)\n", l, (type[l] == CONV) ? "Conv" : "FC");
                     printf("\t\t FP Computation time %f", fp_comp_timer[s][l]);
                     if (type[l] == CONV) printf(" (im2col = %f)", fp_im2col_timer[s][l]);
-                    printf(" | GFlops %f (cores %d) GFlops/core %f (cores %d)\n", fp_comp_gflops[s][l], OMP_NUM_THREADS, fp_comp_gflops_per_thread[s][l], OMP_NUM_THREADS);
+                    printf(" | GFlops %f (cores %d) GFlops/core %f (cores %d)\n", fp_comp_gflops[s][l], 1 /*OMP_NUM_THREADS*/, fp_comp_gflops_per_thread[s][l], 1);//OMP_NUM_THREADS);
                 }
                 total_time += step_timer[s];
             }
@@ -671,14 +719,14 @@ int main(int argc, char * argv []) {
             printf("#layer #threads total_time \n");
             for (l = 1; l < NUM_LAYERS; l++) {
 		tt+=total_time_fp[l];
-                printf("%d %d %f\n", l, OMP_NUM_THREADS, total_time_fp[l] / (nsteps - 1)); 
+                printf("%d %d %f\n", l, max_threads, total_time_fp[l] / (nsteps - 1)); 
             }
             printf("Total %f \n", tt/ (nsteps - 1));
 
 #endif
 #endif    
 
-    printf("Total %d steps, batches %d, teams %d => time %f (s)\n", nsteps, BATCH_SIZE, teams, time);
+    printf("Total %d steps, batches %d, teams %d => time %f (s)\n", nsteps, BATCH_SIZE_V, teams, time);
 
     return 0;
 }

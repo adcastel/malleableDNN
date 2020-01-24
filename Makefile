@@ -12,7 +12,8 @@ BLISFLAGS := -I/home/adcastel/opt/blis-0-5-1/include/blis/ -L/home/adcastel/opt/
 OMPFLAGS := -I/opt/intel/compilers_and_libraries_2017.1.132/linux/compiler/include/ -L/opt/intel/compilers_and_libraries_2017.1.132/linux/compiler/lib/intel64_lin/ -liomp5 -fopenmp
 OMPFLAGS := -fopenmp
 CC := gcc
-CFLAGS := -O3 #-Wall  
+#CC := /opt/intel/bin/icc
+CFLAGS := -O0 #-Wall  
 
 OBJECTS := 
 
@@ -23,6 +24,9 @@ endif
 
 ifeq ($(NOIM2COL), 1)
     CFLAGS += -DNOIMTOCOL
+endif
+ifeq ($(NOGEMM), 1)
+    CFLAGS += -DNOGEMM
 endif
 
 ifeq ($(PROGRESS), 1)
