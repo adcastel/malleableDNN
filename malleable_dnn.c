@@ -144,13 +144,13 @@ void test_gemm(dim_t m, dim_t n, dim_t k, int max_threads, rntm_t * rnmt ){
 /* Computation functions */
 #ifdef TESTGEMM
 void FC_gemm_fp(int m, int n, int k, float * A, int lda, float * B, int ldb, float * C, int ldc, int threads, int max_threads, rntm_t * rntm) {
-#ifndef NOGEMM  
     test_gemm(m,n,k,max_threads,rntm);
-#endif
 }
 #else
 void FC_gemm_fp(obj_t * a, obj_t *b, obj_t *c, obj_t * alpha, obj_t * beta ,rntm_t * rntm){
+#ifndef NOGEMM  
     bli_gemm_ex(alpha, a, b, beta, c, NULL, rntm);
+#endif
 }
 #endif
 
@@ -268,10 +268,10 @@ void  init_batch_size(int * BATCH_SIZE,int nsteps,int BATCH_SIZE_V, int * max_ba
 	srand (2017);
 	*max_batch = BATCH_SIZE_V;
 	for(i=0; i<nsteps; i++){
-		BATCH_SIZE[i] = (BATCH_SIZE_V > 0) ? BATCH_SIZE_V : (pow(64,rand() % 2)) ;
-		//BATCH_SIZE[i] = (BATCH_SIZE_V > 0) ? BATCH_SIZE_V : ((rand() % 8)+1) ;
+		//BATCH_SIZE[i] = (BATCH_SIZE_V > 0) ? BATCH_SIZE_V : (pow(64,rand() % 2)) ;
+		BATCH_SIZE[i] = (BATCH_SIZE_V > 0) ? BATCH_SIZE_V : ((rand() % 8)+1) ;
 		if(BATCH_SIZE[i] > *max_batch) *max_batch = BATCH_SIZE[i];
-		printf("BATCH_SIZE[%d] = %d\n", i, BATCH_SIZE[i]);
+	//	printf("BATCH_SIZE[%d] = %d\n", i, BATCH_SIZE[i]);
 	} 
 	//printf("max_batch = %d\n", *max_batch);
 
@@ -293,8 +293,12 @@ int main(int argc, char * argv []) {
     int max, min, max_batch = 0;
     int BATCH_SIZE_V = (argv[5] == NULL) ? 0 : atoi(argv[5]);// Batch size. if 0, random values
     int * BATCH_SIZE = malloc (sizeof(int)*nsteps);
+
     init_batch_size(BATCH_SIZE,nsteps,BATCH_SIZE_V, &max_batch);
+
     int malleable = (argv[6] == NULL) ? 0 : atoi(argv[6]);// 0 or 1
+    int change = (argv[7] == NULL) ? 0 : atoi(argv[7]);// 0 or 1
+    
     if(malleable){
         teams = 2;
         max_threads = 10;
@@ -302,15 +306,19 @@ int main(int argc, char * argv []) {
         max = (argv[9] == NULL) ? 8 : atoi(argv[9]);;
         
     }
-    int change = (argv[7] == NULL) ? 0 : atoi(argv[7]);// 0 or 1
-    printf("Model %s. Malleable %d. Change %d. Steps %d. Teams %d. Max threads %d. Batch size %s\n",argv[1],malleable,change,nsteps,teams,max_threads,(argv[5]==0)?"Rand":argv[5]);
+
+    printf("Model %s. Malleable %d. Change %d. Steps %d. Teams %d. Max threads %d. Batch size %s\n",
+		argv[1],malleable,change,nsteps,teams,max_threads,(argv[5]==0)?"Rand":argv[5]);
     
     bli_init();
+    
     rntm_t * rntm = malloc(sizeof(rntm_t)*teams);
     int * current = malloc(sizeof(int)*teams);
-    for(int t = 0; t< teams; t++){
+   //creo los objetos rntm con el numero maximo de hilos 
+   for(int t = 0; t< teams; t++){
     	bli_rntm_init(&rntm[t]);
-   	bli_rntm_set_ways(1,1,(malleable == 0) ? max_threads : max ,1,1,&rntm[t]);
+	printf("creo rntm[%d] con %d hilos\n",t,/*(malleable == 0) ?*/ max_threads/*  : max*/);
+   	bli_rntm_set_ways(1,1,/*(malleable == 0) ?*/ max_threads /* : max*/ ,1,1,&rntm[t]);
     } 
     
     double * time = malloc(sizeof(double)*teams); 
@@ -318,6 +326,7 @@ int main(int argc, char * argv []) {
     int aux, j;
     char auxstr[200], auxstr2[200], *token, *str;
     
+    // EMPIEZA LA LECTURA DEL MODELO
 #ifdef PROGRESS
     printf("Model: %s\n", argv[1]);
 #endif
@@ -380,6 +389,7 @@ int main(int argc, char * argv []) {
 	i++;
     }
     fclose(fp_model);
+    // ACABA LA LECTURA DEL MODELO
 
 #ifdef TIMER
     double *step_timer = (double *) malloc(sizeof(double) * nsteps);
@@ -434,43 +444,20 @@ int main(int argc, char * argv []) {
             size_t mip = channels[l-1] * kwidth[l] * kheight[l] * max_batch * image_size[l-1] * image_size[l-1];
             size_t mo = nkernels[l] * max_batch * image_size[l-1] * image_size[l-1];
             size_t mf = nkernels[l] * channels[l-1] * kwidth[l] * kheight[l];
-            if (mi > max_i) {
-                max_i = mi;
-            }
-            if (mip > max_ip) {
-                max_ip = mip;
-            }
-            if (mo > max_o) {
-                max_o = mo;
-            }
-            if (mf > max_f) {
-                max_f = mf;
-            }
+            if (mi > max_i) {  max_i = mi; }
+            if (mip > max_ip) { max_ip = mip; }
+            if (mo > max_o) { max_o = mo; }
+            if (mf > max_f) { max_f = mf;  }
         }
     }
-#ifdef PROGRESS
-    printf("mi = %lu | mip = %lu | mo = %lu | mf = %lu\n", max_i, max_ip, max_o, max_f);
-#endif
     
 
-    /* Warm-up zone */
-    int omp_warm;
-#pragma omp parallel
-    {
-        omp_warm = omp_get_num_threads();
-    }
-    /*cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans,
-            200, 200, 200, 1,
-            matrix_A, 200, matrix_B, 200, 0, matrix_C, 200);
-    */   
-
-   // printf("Tengo %d threads repartidos en %d teams de %d threads\n",omp_warm,teams,threads);
         #pragma omp parallel num_threads(teams)
 	{
-    //	printf("Thread %d con team de %d threads reservando memoria...\n",omp_get_thread_num(), threads);
 	int id = omp_get_thread_num();
         int threads;
-     	if(!malleable){
+     	
+	if(!malleable){
             threads = max_threads/teams;
             int extra = max_threads % teams;
             if (id < extra)
@@ -480,7 +467,8 @@ int main(int argc, char * argv []) {
             threads = (id == 0) ? max : min;
 	    current[id] = (id == 0) ? max : min;
         }
-        bli_rntm_set_ways(1,1,threads,1,1,&rntm[id]);
+        
+	bli_rntm_set_ways(1,1,threads,1,1,&rntm[id]);
     	printf("Thread %d con team de %d threads reservando memoria...\n",id, threads);
 	
         obj_t * a = malloc(sizeof(obj_t) * NUM_LAYERS);    
@@ -539,6 +527,7 @@ int main(int argc, char * argv []) {
         #pragma omp barrier 
 	
         time[id] = omp_get_wtime();
+	//EMPIEZA EL PROCESADO DE CADA STEP
 	#pragma omp for private(l) schedule(dynamic,1) nowait
         for (s = 0; s < nsteps; s++) {
 #ifdef PROGRESS
@@ -550,10 +539,7 @@ int main(int argc, char * argv []) {
 	    steps_by_id++;
             //Forward pass
             for (l = 1; l < NUM_LAYERS; l++) {
-    	//printf("Thread %d em step %d layer %d...\n",omp_get_thread_num(),s,l);
-    	        //printf("ID %d step %d layer %d current %d\n", id, s, l, current[id]);
             if(change == l){
-        //        printf("Malleable! from %d to %d Layer %d my id %d\n",max,min,l,id );
                 bli_rntm_set_active_ways(1,1,max,1,1,&rntm[!id]);
                 bli_rntm_set_active_ways(1,1,min,1,1,&rntm[id]);
 		current[id] = min;
@@ -690,6 +676,7 @@ int main(int argc, char * argv []) {
                 printf("STEP %d\n Batch %d Time %f\n", s, BATCH_SIZE[s],step_timer[s]);
                 printf("\t **** FP ****\n");
                 for (l = 1; l < NUM_LAYERS; l++) {
+		    if(type[l] != CONV || type[l] != FC) continue; 
                     printf("\t Layer %d (type %s)\n", l, (type[l] == CONV) ? "Conv" : "FC");
                     printf("\t\t FP Computation time %f", fp_comp_timer[s][l]);
                     if (type[l] == CONV) printf(" (im2col = %f)", fp_im2col_timer[s][l]);
