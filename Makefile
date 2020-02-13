@@ -13,13 +13,16 @@ OMPFLAGS := -I/opt/intel/compilers_and_libraries_2017.1.132/linux/compiler/inclu
 OMPFLAGS := -fopenmp
 CC := gcc
 #CC := /opt/intel/bin/icc
-CFLAGS := -O0 #-Wall  
+CFLAGS := -O3 #-Wall  
 
 OBJECTS := 
 
 
 ifeq ($(DEBUG), 1)
     CFLAGS = -g -Wall
+endif
+ifeq ($(DOUBLE), 1)
+    CFLAGS += -DDOUBLE
 endif
 
 ifeq ($(NOIM2COL), 1)

@@ -20,6 +20,14 @@
         fp_comp_gflops_per_thread[s][l] = fp_comp_gflops[s][l]/(1.0*OMP_NUM_THREADS*procs[l]); 
 
 
+#ifdef DOUBLE
+#define DATA_TYPE double
+#define B_DATA_TYPE BLIS_DOUBLE
+#else
+#define DATA_TYPE float
+#define B_DATA_TYPE BLIS_FLOAT
+#endif
+
 /* Model features */
 
 //#define NUM_STEPS  3  // Steps of the simulation
@@ -85,11 +93,11 @@ void test_gemm(dim_t m, dim_t n, dim_t k, int max_threads, rntm_t * rnmt ){
     num_t dt_a, dt_b, dt_c, dt_alpha, dt_beta;
     //dim_t m, n, k;
     double tini, tend;
-    dt_a = BLIS_DOUBLE;    
-    dt_b = BLIS_DOUBLE;    
-    dt_c = BLIS_DOUBLE;    
-    dt_alpha = BLIS_DOUBLE;
-    dt_beta = BLIS_DOUBLE; 
+    dt_a = B_DATA_TYPE;    
+    dt_b = B_DATA_TYPE;    
+    dt_c = B_DATA_TYPE;    
+    dt_alpha = B_DATA_TYPE;
+    dt_beta = B_DATA_TYPE; 
 
     bli_obj_create( dt_alpha, 1, 1, 0, 0, &alpha ); 
     bli_obj_create( dt_beta,  1, 1, 0, 0, &beta );  
@@ -143,7 +151,7 @@ void test_gemm(dim_t m, dim_t n, dim_t k, int max_threads, rntm_t * rnmt ){
 
 /* Computation functions */
 #ifdef TESTGEMM
-void FC_gemm_fp(int m, int n, int k, float * A, int lda, float * B, int ldb, float * C, int ldc, int threads, int max_threads, rntm_t * rntm) {
+void FC_gemm_fp(int m, int n, int k, DATA_TYPE * A, int lda, DATA_TYPE * B, int ldb, DATA_TYPE * C, int ldc, int threads, int max_threads, rntm_t * rntm) {
     test_gemm(m,n,k,max_threads,rntm);
 }
 #else
@@ -155,18 +163,18 @@ void FC_gemm_fp(obj_t * a, obj_t *b, obj_t *c, obj_t * alpha, obj_t * beta ,rntm
 #endif
 
 
-void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, float * I, 
-        float * IP, obj_t *a, obj_t * F, obj_t * O, obj_t * alpha, obj_t * beta, 
+void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, DATA_TYPE * I, 
+        DATA_TYPE * IP, obj_t *a, obj_t * F, obj_t * O, obj_t * alpha, obj_t * beta, 
         double * time, int threads, int max_threads, rntm_t * rntm) {
 
     // B batch size
     // Input image of size H x W, with C channels
     // K Kernels of size KH x KW each, with C channels
     /*
-    float I[C][B][H][W];          // Input: C x (B H W)
-    float IP[C][KW][KH][B][H][W]; // Patched input: (C K_H K_W) x (B H W)
-    float O[K][B][H][W];          // Output: K x (B H W)
-    float F[K][C][KH][KW];        // Filter: K x (C K_H K_W)
+    DATA_TYPE I[C][B][H][W];          // Input: C x (B H W)
+    DATA_TYPE IP[C][KW][KH][B][H][W]; // Patched input: (C K_H K_W) x (B H W)
+    DATA_TYPE O[K][B][H][W];          // Output: K x (B H W)
+    DATA_TYPE F[K][C][KH][KW];        // Filter: K x (C K_H K_W)
      */
 
     int b, h, w, kh, kw, c;
@@ -300,11 +308,14 @@ int main(int argc, char * argv []) {
     int change = (argv[7] == NULL) ? 0 : atoi(argv[7]);// 0 or 1
     
     if(malleable){
-        teams = 2;
-        max_threads = 10;
+        /*teams = 2;*/
         min =(argv[8] == NULL) ? 2 : atoi(argv[8]);
         max = (argv[9] == NULL) ? 8 : atoi(argv[9]);;
         
+    }
+    else{
+	max = ceil(max_threads/(teams*1.0));
+	min = max;
     }
 
     printf("Model %s. Malleable %d. Change %d. Steps %d. Teams %d. Max threads %d. Batch size %s\n",
@@ -317,8 +328,9 @@ int main(int argc, char * argv []) {
    //creo los objetos rntm con el numero maximo de hilos 
    for(int t = 0; t< teams; t++){
     	bli_rntm_init(&rntm[t]);
-	printf("creo rntm[%d] con %d hilos\n",t,/*(malleable == 0) ?*/ max_threads/*  : max*/);
-   	bli_rntm_set_ways(1,1,/*(malleable == 0) ?*/ max_threads /* : max*/ ,1,1,&rntm[t]);
+	//printf("creo rntm[%d] con %d hilos\n",t,/*(malleable == 0) ?*/ max_threads/*  : max*/);
+	printf("creo rntm[%d] con %d hilos\n",t,/*(malleable == 0) ? max_threads  :*/ max);
+   	bli_rntm_set_ways(1,1,/*(malleable == 0) ? max_threads  :*/ max ,1,1,&rntm[t]);
     } 
     
     double * time = malloc(sizeof(double)*teams); 
@@ -464,8 +476,8 @@ int main(int argc, char * argv []) {
 		threads++;
         }
         else{
+	    // Si soy el id0 me pongo los maximos y sino, los minimos
             threads = (id == 0) ? max : min;
-	    current[id] = (id == 0) ? max : min;
         }
         
 	bli_rntm_set_ways(1,1,threads,1,1,&rntm[id]);
@@ -478,11 +490,11 @@ int main(int argc, char * argv []) {
         obj_t alpha, beta;
         num_t dt_a, dt_b, dt_c, dt_alpha, dt_beta;
     //dim_t m, n, k;
-        dt_a = BLIS_DOUBLE;    
-        dt_b = BLIS_DOUBLE;    
-        dt_c = BLIS_DOUBLE;    
-        dt_alpha = BLIS_DOUBLE;
-        dt_beta = BLIS_DOUBLE;
+        dt_a = B_DATA_TYPE;    
+        dt_b = B_DATA_TYPE;    
+        dt_c = B_DATA_TYPE;    
+        dt_alpha = B_DATA_TYPE;
+        dt_beta = B_DATA_TYPE;
         bli_obj_create( dt_alpha, 1, 1, 0, 0, &alpha ); 
         bli_obj_create( dt_beta,  1, 1, 0, 0, &beta );  
         
@@ -522,8 +534,9 @@ int main(int argc, char * argv []) {
 
         
         int steps_by_id=0;
-    	float * conv_i = malloc(max_i * sizeof (float));
-    	float * conv_ip = malloc(max_ip * sizeof (float));
+    	DATA_TYPE * conv_i = malloc(max_i * sizeof (DATA_TYPE));
+    	DATA_TYPE * conv_ip = malloc(max_ip * sizeof (DATA_TYPE));
+	printf("ID %d All the memory is already allocated!\n",id);
         #pragma omp barrier 
 	
         time[id] = omp_get_wtime();
@@ -539,12 +552,15 @@ int main(int argc, char * argv []) {
 	    steps_by_id++;
             //Forward pass
             for (l = 1; l < NUM_LAYERS; l++) {
-            if(change == l){
-                bli_rntm_set_active_ways(1,1,max,1,1,&rntm[!id]);
-                bli_rntm_set_active_ways(1,1,min,1,1,&rntm[id]);
-		current[id] = min;
-		current[!id] = max;
-            }
+            if(malleable == 1 && change == l){
+	//	el actual se pone el maximo porque va a pasar por la parte costosa
+                bli_rntm_set_active_ways(1,1,max,1,1,&rntm[id]);
+		int tt;
+	// 	al resto se les pone a minimo
+		for(tt = 1; tt < teams; tt++){
+                    bli_rntm_set_active_ways(1,1,min,1,1,&rntm[(id+tt)%teams]);
+	        }
+	    }
 #ifdef PROGRESS
                 printf("ID %d FP layer %d ",id, l);
 #endif
@@ -569,6 +585,7 @@ int main(int argc, char * argv []) {
                             fp_comp_timer[s][l] = omp_get_wtime();
 #endif
 #ifdef TESTGEMMS
+			//ESTO SOLO ES PARA EL TEST, POR ESO EL RNTM ES GENERICO
                             FC_gemm_fp(m, n, k, matrix_A, lda, matrix_B, ldb, matrix_C, ldc, threads, max_threads, &rntm);
 #else
                             int m = nneurons[l]; //nneurons[l]/procs[l];//antes /size
@@ -676,7 +693,7 @@ int main(int argc, char * argv []) {
                 printf("STEP %d\n Batch %d Time %f\n", s, BATCH_SIZE[s],step_timer[s]);
                 printf("\t **** FP ****\n");
                 for (l = 1; l < NUM_LAYERS; l++) {
-		    if(type[l] != CONV || type[l] != FC) continue; 
+		    if(type[l] != CONV && type[l] != FC) continue; 
                     printf("\t Layer %d (type %s)\n", l, (type[l] == CONV) ? "Conv" : "FC");
                     printf("\t\t FP Computation time %f", fp_comp_timer[s][l]);
                     if (type[l] == CONV) printf(" (im2col = %f)", fp_im2col_timer[s][l]);
