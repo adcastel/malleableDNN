@@ -13,7 +13,7 @@ OMPFLAGS := -I/opt/intel/compilers_and_libraries_2017.1.132/linux/compiler/inclu
 OMPFLAGS := -fopenmp
 CC := gcc
 #CC := /opt/intel/bin/icc
-CFLAGS := -O3 #-Wall  
+CFLAGS := #-Wall#-O3 #-Wall  
 
 OBJECTS := 
 
@@ -41,11 +41,18 @@ endif
 ifeq ($(SUMMARY), 1)
     CFLAGS += -DSUMMARY
 endif
+ifeq ($(TRAZA), 1)
+    CFLAGS += -DTRAZA
+    CFLAGS += -g -O0
+    EXTRAEFLAGS := -L/home/adcastel/opt/extrae/lib/ -lomptrace -I/home/adcastel/opt/extrae/include
+else
+    CFLAGS += -O3
+endif
 test:
 	$(CC) test.c -o test $(BLISFLAGS) $(OMPFLAGS) 
 	
 malleableDNN:
-	$(CC) $(CFLAGS) malleable_dnn.c -o malleable_dnn $(BLISFLAGS) $(OMPFLAGS)
+	$(CC) $(CFLAGS) malleable_dnn.c -o malleable_dnn $(BLISFLAGS) $(OMPFLAGS) $(EXTRAEFLAGS)
 clean:
 	rm *.so *.o test malleable_dnn
 

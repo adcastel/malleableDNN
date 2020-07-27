@@ -6,6 +6,10 @@
 //#include "cblas.h"
 //#include "mkl.h"
 #include "blis.h"
+#ifdef TRAZA
+#include "extrae_user_events.h"
+#endif
+
 
 #define INPUT -1
 #define FC 0
@@ -165,7 +169,7 @@ void FC_gemm_fp(obj_t * a, obj_t *b, obj_t *c, obj_t * alpha, obj_t * beta ,rntm
 
 void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, DATA_TYPE * I, 
         DATA_TYPE * IP, obj_t *a, obj_t * F, obj_t * O, obj_t * alpha, obj_t * beta, 
-        double * time, int threads, int max_threads, rntm_t * rntm) {
+        double * time, int threads, int max_threads, rntm_t * rntm/*, int * current, int teams*/) {
 
     // B batch size
     // Input image of size H x W, with C channels
@@ -176,7 +180,7 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, DATA_TYPE
     DATA_TYPE O[K][B][H][W];          // Output: K x (B H W)
     DATA_TYPE F[K][C][KH][KW];        // Filter: K x (C K_H K_W)
      */
-
+    int id = omp_get_thread_num();
     int b, h, w, kh, kw, c;
 #ifdef TIMER
     *time = omp_get_wtime();
@@ -192,7 +196,12 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, DATA_TYPE
     int kk7 = (W + KW);
     int jk1, ik1, ik2, jk2, jk3, jk4, ik3, ik4, ik5;
 #ifndef NOIM2COL
+        
 	int active = (threads > 4)? 4 : threads;
+/*	int prev_curr = current[(id+1)%teams]
+	current[id] = active;
+        bli_rntm_set_active_ways(1,1,max,1,1,&rntm[(id+1)%teams]);
+        bli_rntm_set_active_ways(1,1,active,1,1,&rntm[(id);*/
 #pragma omp parallel for private(b,h,w,kh,kw,ik1,ik2,ik3,ik4,ik5,jk1,jk2,jk3,jk4) num_threads(active)
     for (c = 0; c < C; c++) {
         ik1 = c*kk1;
@@ -209,7 +218,7 @@ void CONV_fp(int l, int K, int B, int H, int W, int KH, int KW, int C, DATA_TYPE
                     for (h = 0; h < H; h++) {
                         ik5 = ik4 + h*W;
                         for (w = 0; w < W; w++){
-                           IP[ ik5 + w ] = I[ /*jk4 +*/ w];
+                           IP[ ik5 + w ] = I[jk4 + w];
 			}
                     }
                 }
@@ -276,14 +285,27 @@ void  init_batch_size(int * BATCH_SIZE,int nsteps,int BATCH_SIZE_V, int * max_ba
 	srand (2017);
 	*max_batch = BATCH_SIZE_V;
 	for(i=0; i<nsteps; i++){
-		//BATCH_SIZE[i] = (BATCH_SIZE_V > 0) ? BATCH_SIZE_V : (pow(64,rand() % 2)) ;
-		BATCH_SIZE[i] = (BATCH_SIZE_V > 0) ? BATCH_SIZE_V : ((rand() % 8)+1) ;
+		//BATCH_SIZE[i] = (BATCH_SIZE_V > 0) ? BATCH_SIZE_V : (pow(64,rand() % 2)) ; // 1 o 64
+		BATCH_SIZE[i] = (BATCH_SIZE_V > 0) ? BATCH_SIZE_V : ((rand() % 8)+1) ; //Entre 1 y 8
 		if(BATCH_SIZE[i] > *max_batch) *max_batch = BATCH_SIZE[i];
 	//	printf("BATCH_SIZE[%d] = %d\n", i, BATCH_SIZE[i]);
 	} 
 	//printf("max_batch = %d\n", *max_batch);
 
 }
+
+void set_delays(int n, double * delays, double value){
+    int i;
+    srand (2017);
+    int min = 5;
+    int max = 20;
+    delays[0]=0.0;
+    for(i=1;i<n;i++){
+        delays[i]= delays[i-1] + ((value >= 0) ? value : ((rand() % (max - min + 1)) + min)/100.0);
+        //printf("Delays[%d] = %f", i,delays[i]);
+    }
+}
+
 
 int main(int argc, char * argv []) {
 
@@ -301,16 +323,17 @@ int main(int argc, char * argv []) {
     int max, min, max_batch = 0;
     int BATCH_SIZE_V = (argv[5] == NULL) ? 0 : atoi(argv[5]);// Batch size. if 0, random values
     int * BATCH_SIZE = malloc (sizeof(int)*nsteps);
+    float delays = (argv[6] == NULL) ? 0.0 : atof(argv[6]);// 0 or 1
 
     init_batch_size(BATCH_SIZE,nsteps,BATCH_SIZE_V, &max_batch);
 
-    int malleable = (argv[6] == NULL) ? 0 : atoi(argv[6]);// 0 or 1
-    int change = (argv[7] == NULL) ? 0 : atoi(argv[7]);// 0 or 1
+    int malleable = (argv[7] == NULL) ? 0 : atoi(argv[7]);// 0 or 1
+    int change = (argv[8] == NULL) ? 0 : atoi(argv[8]);// 0 or 1
     
     if(malleable){
         /*teams = 2;*/
-        min =(argv[8] == NULL) ? 2 : atoi(argv[8]);
-        max = (argv[9] == NULL) ? 8 : atoi(argv[9]);;
+        min =(argv[9] == NULL) ? 1 : atoi(argv[9]);
+        max = (argv[10] == NULL) ? max_threads-1 : atoi(argv[10]);;
         
     }
     else{
@@ -318,8 +341,8 @@ int main(int argc, char * argv []) {
 	min = max;
     }
 
-    printf("Model %s. Malleable %d. Change %d. Steps %d. Teams %d. Max threads %d. Batch size %s\n",
-		argv[1],malleable,change,nsteps,teams,max_threads,(argv[5]==0)?"Rand":argv[5]);
+    printf("Model %s. Malleable %d. Change %d. Steps %d. Teams %d. Max threads %d. Batch size %s. Delay %f \n",
+		argv[1],malleable,change,nsteps,teams,max_threads,(argv[5]==0)?"Rand":argv[5], delays);
     
     bli_init();
     
@@ -405,6 +428,8 @@ int main(int argc, char * argv []) {
 
 #ifdef TIMER
     double *step_timer = (double *) malloc(sizeof(double) * nsteps);
+    double *delay = (double *) malloc(sizeof(double) * nsteps);
+    double *waiting_time = (double *) malloc(sizeof(double) * nsteps);
     double ** fp_comp_timer = (double **) malloc(sizeof(double) * nsteps); 
     double ** fp_im2col_timer = malloc(sizeof(double) * nsteps);
     double ** fp_comp_gflops = malloc(sizeof(double) * nsteps);
@@ -416,6 +441,9 @@ int main(int argc, char * argv []) {
         fp_comp_gflops[i] = (double *) malloc(sizeof (double) * NUM_LAYERS);
         fp_comp_gflops_per_thread[i] = (double *) malloc(sizeof (double) * NUM_LAYERS);
     }
+
+    set_delays(nsteps,delay,delays);
+
 #else
    
     double ** fp_im2col_timer = malloc(sizeof(double) * nsteps);
@@ -479,6 +507,7 @@ int main(int argc, char * argv []) {
 	    // Si soy el id0 me pongo los maximos y sino, los minimos
             threads = (id == 0) ? max : min;
         }
+        current[id] = threads;
         
 	bli_rntm_set_ways(1,1,threads,1,1,&rntm[id]);
     	printf("Thread %d con team de %d threads reservando memoria...\n",id, threads);
@@ -541,6 +570,7 @@ int main(int argc, char * argv []) {
 	
         time[id] = omp_get_wtime();
 	//EMPIEZA EL PROCESADO DE CADA STEP
+	double start_time = bli_clock();
 	#pragma omp for private(l) schedule(dynamic,1) nowait
         for (s = 0; s < nsteps; s++) {
 #ifdef PROGRESS
@@ -552,13 +582,15 @@ int main(int argc, char * argv []) {
 	    steps_by_id++;
             //Forward pass
             for (l = 1; l < NUM_LAYERS; l++) {
-            if(malleable == 1 && change == l){
+            if(malleable == 1 && change /*1*/ == l){
 	//	el actual se pone el maximo porque va a pasar por la parte costosa
                 bli_rntm_set_active_ways(1,1,max,1,1,&rntm[id]);
+	        current[id] = max;
 		int tt;
 	// 	al resto se les pone a minimo
 		for(tt = 1; tt < teams; tt++){
                     bli_rntm_set_active_ways(1,1,min,1,1,&rntm[(id+tt)%teams]);
+		    current[(id+tt)%teams] = min;
 	        }
 	    }
 #ifdef PROGRESS
@@ -576,10 +608,6 @@ int main(int argc, char * argv []) {
                             int lda = m;
                             int ldb = k;
                             int ldc = m;
-			   /*obj_t va, vb, vc;
-				bli_acquire_mpart( 0, 0, m, k, &a[l], &va );
-				bli_acquire_mpart( 0, 0, k, n, &b[l], &vb );
-				bli_acquire_mpart( 0, 0, m, n, &c[l], &vc );*/
 #endif
 #ifdef TIMER
                             fp_comp_timer[s][l] = omp_get_wtime();
@@ -667,6 +695,7 @@ int main(int argc, char * argv []) {
 
 #ifdef TIMER
             step_timer[s] = bli_clock() - step_timer[s];
+            waiting_time[s] = (bli_clock() - (start_time + delay[s]))-step_timer[s];
 #ifdef PROGRESS
 	    printf("Time step %d = %f\n",s,step_timer[s]);
 #endif
@@ -687,10 +716,12 @@ int main(int argc, char * argv []) {
 	fclose(fp_results);
 	} //parallel
 #ifdef TIMER
+            double total_wt =0.0;
 #ifndef SUMMARY
             double total_time = 0.0;
             for (s = 0; s < nsteps; s++) {
-                printf("STEP %d\n Batch %d Time %f\n", s, BATCH_SIZE[s],step_timer[s]);
+                printf("STEP %d\n Batch %d Time %f, waiting_time %f\n", s, BATCH_SIZE[s],step_timer[s],waiting_time[s]);
+                total_wt+=waiting_time[s];
                 printf("\t **** FP ****\n");
                 for (l = 1; l < NUM_LAYERS; l++) {
 		    if(type[l] != CONV && type[l] != FC) continue; 
@@ -702,10 +733,10 @@ int main(int argc, char * argv []) {
                 total_time += step_timer[s];
             }
             printf("Time per step = %f\n", total_time / nsteps);
+            printf("Avg waiting time = %f\n", total_wt / nsteps);
 #else
 
             double  total_time_r[NUM_LAYERS], total_time_fp[NUM_LAYERS], total_time_comp_fp[NUM_LAYERS]; 
-            
             for (l = 1; l < NUM_LAYERS; l++) {
                 total_time_r[l] = 0;
                 total_time_fp[l] = 0;
@@ -713,24 +744,25 @@ int main(int argc, char * argv []) {
 
             }
             for (s = 1; s < nsteps; s++) {
-            for (l = 1; l < NUM_LAYERS; l++) {
+                total_wt+=waiting_time[s];
+                for (l = 1; l < NUM_LAYERS; l++) {
                     total_time_fp[l] += fp_comp_timer[s][l];
                     total_time_comp_fp[l] += fp_comp_timer[s][l];
-}
-                    total_time_r[l] += total_time_fp[l];
                 }
+                    total_time_r[l] += total_time_fp[l];
+            }
             double tt = 0.0;
             printf("#layer #threads total_time \n");
             for (l = 1; l < NUM_LAYERS; l++) {
 		tt+=total_time_fp[l];
                 printf("%d %d %f\n", l, max_threads, total_time_fp[l] / (nsteps - 1)); 
             }
-            printf("Total %f \n", tt/ (nsteps - 1));
+            printf("Total %f Waiting_time %f\n", tt/ (nsteps - 1), total_wt/(nsteps-1));
 
 #endif
 #endif    
 
-    printf("Total %d steps, batches %d, teams %d => time %f (s)\n", nsteps, BATCH_SIZE_V, teams, time);
+    //printf("Total %d steps, batches %d, teams %d => time %f (s)\n", nsteps, BATCH_SIZE_V, teams, time[id]);
 
     return 0;
 }
